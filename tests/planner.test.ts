@@ -105,3 +105,16 @@ test("newer dated message supersedes older one for the same item", () => {
   assert.equal(a.status, "active"); // later date wins even though it arrived first
   assert.equal(b.status, "superseded");
 });
+
+test("fixed-time break near the end: judging moves before it, buffer absorbs the rest", () => {
+  const facts = [...base().filter((x) => x.kind !== "break"), f("start_time", { text: "11:30" }), f("break", { label: "asr", num: 20, text: "15:30" })];
+  const p = buildPlan(facts, 1, 1, DEFAULT_POLICY);
+  assert.equal(p.schedule.items.find((i) => i.label === "asr")?.start, "15:30");
+  assert.ok(p.valid, JSON.stringify(p.checks.filter((c) => !c.pass).map((c) => c.details)));
+});
+
+test("a cost correction replaces the committed item with the same name", () => {
+  const a = f("committed", { label: "Printing", num: 10000 });
+  const b = f("cost", { label: "printing", num: 15000 });
+  assert.equal(a.key, b.key);
+});

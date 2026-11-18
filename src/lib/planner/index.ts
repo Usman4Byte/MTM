@@ -334,60 +334,88 @@ function layoutSchedule(
   elastic[0].minutes = Math.min(firstBuild, Math.max(0, build));
   elastic[1].minutes = Math.max(0, build - elastic[0].minutes);
 
-  const out: ScheduleItem[] = [];
-  const push = (s: Slot, at: number, minutes: number) => {
-    const last = out[out.length - 1];
-    if (last && last.kind === "build" && s.kind === "build" && parseClock(last.end) === at) {
-      last.minutes += minutes;
-      last.end = fmtClock(at + minutes);
-      return;
+  // Sweep the timeline. If a fixed session cannot fit before a fixed-time item and there is no later
+  // build time to absorb the gap, shrink earlier build time instead and add the minutes back as a buffer.
+  const sweep = (slots: Slot[]) => {
+    const out: ScheduleItem[] = [];
+    const sweepNotes: string[] = [];
+    let need = 0;
+    const push = (s: Slot, at: number, minutes: number) => {
+      const last = out[out.length - 1];
+      if (last && last.kind === "build" && s.kind === "build" && parseClock(last.end) === at) {
+        last.minutes += minutes;
+        last.end = fmtClock(at + minutes);
+        return;
+      }
+      out.push({ start: fmtClock(at), end: fmtClock(at + minutes), minutes, label: s.label, kind: s.kind, factIds: s.factIds });
+    };
+    let cursor = start;
+    const q = [...fixed];
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      let rem = s.minutes;
+      let guard = 0;
+      while (rem > 0 && guard++ < 50) {
+        const nf = q[0];
+        if (nf && cursor >= nf.at) {
+          if (cursor > nf.at) sweepNotes.push(`"${nf.slot.label}" was due at ${fmtClock(nf.at)} but could only start at ${fmtClock(cursor)}.`);
+          push(nf.slot, cursor, nf.slot.minutes);
+          cursor += nf.slot.minutes;
+          q.shift();
+          continue;
+        }
+        const room = nf ? nf.at - cursor : Infinity;
+        if (s.elastic) {
+          const take = Math.min(rem, room);
+          push(s, cursor, take);
+          cursor += take;
+          rem -= take;
+        } else if (rem <= room) {
+          push(s, cursor, rem);
+          cursor += rem;
+          rem = 0;
+        } else {
+          const donor = slots.slice(i + 1).find((x) => x.elastic && x.minutes > 0);
+          const take = donor ? Math.min(room, donor.minutes) : room;
+          if (donor) donor.minutes -= take;
+          else if (!need) need = rem - room;
+          push({ label: "Build (hacking)", kind: "build", minutes: take, elastic: true, factIds: [] }, cursor, take);
+          cursor += take;
+        }
+      }
     }
-    out.push({ start: fmtClock(at), end: fmtClock(at + minutes), minutes, label: s.label, kind: s.kind, factIds: s.factIds });
+    while (q.length) {
+      const nf = q.shift()!;
+      if (cursor > nf.at) sweepNotes.push(`"${nf.slot.label}" was due at ${fmtClock(nf.at)} but could only start at ${fmtClock(cursor)}.`);
+      const at = Math.max(cursor, nf.at);
+      if (at > cursor) push({ label: "Build (hacking)", kind: "build", minutes: at - cursor, elastic: true, factIds: [] }, cursor, at - cursor);
+      push(nf.slot, at, nf.slot.minutes);
+      cursor = at + nf.slot.minutes;
+    }
+    return { out, sweepNotes, cursor, need };
   };
-  let cursor = start;
-  const q = [...fixed];
-  for (let i = 0; i < seq.length; i++) {
-    const s = seq[i];
-    let rem = s.minutes;
-    let guard = 0;
-    while (rem > 0 && guard++ < 50) {
-      const nf = q[0];
-      if (nf && cursor >= nf.at) {
-        if (cursor > nf.at) notes.push(`"${nf.slot.label}" was due at ${fmtClock(nf.at)} but could only start at ${fmtClock(cursor)}.`);
-        push(nf.slot, cursor, nf.slot.minutes);
-        cursor += nf.slot.minutes;
-        q.shift();
-        continue;
-      }
-      const room = nf ? nf.at - cursor : Infinity;
-      if (s.elastic) {
-        const take = Math.min(rem, room);
-        push(s, cursor, take);
-        cursor += take;
-        rem -= take;
-      } else if (rem <= room) {
-        push(s, cursor, rem);
-        cursor += rem;
-        rem = 0;
-      } else {
-        // the gap before a fixed-time item is too short for this session: fill it with build time borrowed from a later build slot
-        const donor = seq.slice(i + 1).find((x) => x.elastic && x.minutes > 0);
-        const take = donor ? Math.min(room, donor.minutes) : room;
-        if (donor) donor.minutes -= take;
-        else notes.push(`No spare build time to fill the gap before "${nf!.slot.label}".`);
-        push({ label: "Build (hacking)", kind: "build", minutes: take, elastic: true, factIds: [] }, cursor, take);
-        cursor += take;
-      }
+  const clone = () => seq.map((x) => ({ ...x }));
+  let res = sweep(clone());
+  for (let tries = 0; res.cursor !== start + duration && res.need > 0 && tries < 3; tries++) {
+    const slots = clone();
+    let left = res.need;
+    for (const el of slots.filter((x) => x.elastic).reverse()) {
+      const cut = Math.min(left, el.minutes);
+      el.minutes -= cut;
+      left -= cut;
     }
+    if (left > 0) break;
+    const closing = slots.findIndex((x) => x.kind === "closing");
+    slots.splice(closing < 0 ? slots.length : closing, 0, { label: "Buffer (free time)", kind: "block", minutes: res.need, elastic: false, factIds: [] });
+    const next = sweep(slots);
+    if (next.cursor === start + duration && next.sweepNotes.length === 0) {
+      res = next;
+      break;
+    }
+    if (next.need) res = { ...next, need: res.need + next.need };
+    else break;
   }
-  while (q.length) {
-    const nf = q.shift()!;
-    if (cursor > nf.at) notes.push(`"${nf.slot.label}" was due at ${fmtClock(nf.at)} but could only start at ${fmtClock(cursor)}.`);
-    const at = Math.max(cursor, nf.at);
-    if (at > cursor) push({ label: "Build (hacking)", kind: "build", minutes: at - cursor, elastic: true, factIds: [] }, cursor, at - cursor);
-    push(nf.slot, at, nf.slot.minutes);
-    cursor = at + nf.slot.minutes;
-  }
-  if (cursor !== start + duration) notes.push(`Schedule ends at ${fmtClock(cursor)} instead of ${fmtClock(start + duration)}.`);
-  return { items: out.filter((x) => x.minutes > 0), notes };
+  notes.push(...res.sweepNotes);
+  if (res.cursor !== start + duration) notes.push(`Schedule ends at ${fmtClock(res.cursor)} instead of ${fmtClock(start + duration)}.`);
+  return { items: res.out.filter((x) => x.minutes > 0), notes };
 }

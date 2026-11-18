@@ -27,6 +27,8 @@ export function normLabel(s: string | undefined): string {
 export function factKey(f: Pick<Fact, "kind" | "label" | "text" | "id">): string {
   if (f.kind === "note") return `note:${f.id}`;
   if (f.kind === "venue_require") return `venue_require:${normLabel(f.text ?? f.label)}`;
+  // money items share one identity: a "cost printing" correction replaces "committed printing"
+  if (f.kind === "committed" || f.kind === "cost" || f.kind === "request") return `money:${normLabel(f.label)}`;
   if (LABELED.has(f.kind)) return `${f.kind}:${normLabel(f.label)}`;
   return f.kind;
 }

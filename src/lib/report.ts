@@ -16,7 +16,7 @@ export function formatRun(run: Run, opts: { full?: boolean; state?: ProjectState
   out.push(`Limits: ${run.limits.maxCalls} model calls, ${run.limits.maxMs / 1000} s. Used: ${run.calls.length} calls. Areas with model calls: ${run.areasCalled.join(", ") || "none"}.`);
   for (const c of run.calls) {
     out.push("");
-    out.push(`--- CALL #${c.n} | model: ${c.model} | area: ${c.area} | attempt ${c.attempt} | ${c.ms} ms | ${c.ok ? "ok" : `FAILED: ${c.error}`}`);
+    out.push(`--- CALL #${c.n} | model: ${c.model} | area: ${c.area} | ${c.keySlot ? `key ${c.keySlot} | ` : ""}attempt ${c.attempt} | ${c.ms} ms | ${c.ok ? "ok" : `FAILED: ${c.error}`}`);
     out.push(`tokens (API-reported): input=${n(c.usage.promptTokens)} output=${n(c.usage.outputTokens)} thinking=${n(c.usage.thoughtsTokens)} total=${n(c.usage.totalTokens)}`);
     if (opts.full !== false) {
       out.push(">>> INPUT");

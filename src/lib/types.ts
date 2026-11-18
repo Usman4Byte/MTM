@@ -100,6 +100,8 @@ export interface ModelCall {
   runId: number;
   model: string; // model name reported by the API (falls back to requested name)
   requestedModel: string;
+  /** which configured API key was used (1, 2, ...); the key itself is never stored */
+  keySlot?: number;
   area: CallTag;
   attempt: number;
   input: string;

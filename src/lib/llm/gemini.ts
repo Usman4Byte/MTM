@@ -5,7 +5,10 @@
 import type { CallTag, ModelCall } from "../types";
 
 export interface LlmConfig {
+  /** first key (kept for "is a key configured" checks) */
   apiKey: string;
+  /** all configured keys; each model is tried on every key before falling back to the next model */
+  apiKeys: string[];
   /** primary model (first of the chain) */
   model: string;
   /** fallback chain: attempt k uses models[k-1] (last one repeats). Overload/rate-limit/timeout moves down the chain. */
@@ -15,7 +18,19 @@ export interface LlmConfig {
 }
 
 export function llmConfigFromEnv(): LlmConfig {
-  const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? "";
+  const apiKeys = [
+    ...new Set(
+      [
+        process.env.GEMINI_API_KEY,
+        process.env.GOOGLE_API_KEY,
+        ...(process.env.GEMINI_API_KEYS ?? "").split(","),
+        ...Array.from({ length: 8 }, (_, i) => process.env[`GEMINI_API_KEY_${i + 2}`]),
+      ]
+        .map((k) => (k ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+  const apiKey = apiKeys[0] ?? "";
   const chain = (process.env.GEMINI_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
   const primary = (process.env.GEMINI_MODEL ?? "").trim();
   const models = [...new Set([...(primary ? [primary] : []), ...(chain.length ? chain : DEFAULT_CHAIN)])];
@@ -24,7 +39,7 @@ export function llmConfigFromEnv(): LlmConfig {
   let thinkingBudget: number | undefined;
   if (tb !== undefined && tb !== "") thinkingBudget = Number(tb);
   else if (/gemini-2\.5-flash/.test(model)) thinkingBudget = 0;
-  return { apiKey, model, models, thinkingBudget };
+  return { apiKey, apiKeys, model, models, thinkingBudget };
 }
 
 /** Fastest/leanest first (benchmarked on the sample pack), then higher-availability fallbacks. */
@@ -69,8 +84,14 @@ export class GeminiClient {
     private onCall: (c: ModelCall) => void,
   ) {}
 
-  /** One logical request. Failed attempts move down the model chain while budget and time allow. */
-  async callJson(req: CallRequest, maxAttempts = 3): Promise<unknown> {
+  /** Attempt order: each model on every key, then the next model (fast model on a free key beats a slower model). */
+  private routes(): { model: string; key: string; slot: number }[] {
+    const keys = this.cfg.apiKeys.length ? this.cfg.apiKeys : [this.cfg.apiKey];
+    return this.cfg.models.flatMap((model) => keys.map((key, i) => ({ model, key, slot: i + 1 })));
+  }
+
+  /** One logical request. Failed attempts move along the key x model routes while budget and time allow. */
+  async callJson(req: CallRequest, maxAttempts = 4): Promise<unknown> {
     let lastErr = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (this.budget.remaining() <= 0) throw new CallBudgetExceeded(`model-call limit of ${this.budget.maxCalls} reached`);
@@ -79,7 +100,9 @@ export class GeminiClient {
       this.onCall(call);
       if (call.ok && json !== null) return json;
       lastErr = call.error ?? "unknown error";
-      if (/\b(400|401|403|404)\b/.test(lastErr)) break; // not retryable
+      // only a malformed request (400) is hopeless; 401/403 (bad key), 404 (model unavailable),
+      // 429/503 (busy) and timeouts move on to the next key or model
+      if (/^HTTP 400\b/.test(lastErr) && !/api key|permission|quota/i.test(lastErr)) break;
     }
     throw new Error(`model call failed (${req.area}): ${lastErr}`);
   }
@@ -87,7 +110,9 @@ export class GeminiClient {
   private async attempt(req: CallRequest, attempt: number): Promise<CallOutcome> {
     this.budget.used++;
     const n = this.nextCallNumber();
-    const model = this.cfg.models[Math.min(attempt - 1, this.cfg.models.length - 1)] ?? this.cfg.model;
+    const routes = this.routes();
+    const route = routes[Math.min(attempt - 1, routes.length - 1)];
+    const model = route.model;
     const gemma = /^gemma/i.test(model);
     const t0 = Date.now();
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
@@ -110,6 +135,7 @@ export class GeminiClient {
       runId: this.runId,
       model,
       requestedModel: model,
+      keySlot: route.slot,
       area: req.area,
       attempt,
       input,
@@ -118,14 +144,14 @@ export class GeminiClient {
       ms: 0,
       ok: false,
     };
-    // cap each attempt so a slow model leaves time to fall back to the next one in the chain
-    const timeoutMs = Math.max(1000, Math.min(25000, this.budget.msLeft() - 1500));
+    // cap each attempt so a slow model leaves time to fall back: 50 s in a full run (120 s budget), 25 s in an update (60 s)
+    const timeoutMs = Math.max(1000, Math.min(this.budget.maxCalls > 5 ? 50000 : 25000, this.budget.msLeft() - 1500));
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": this.cfg.apiKey },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": route.key },
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });

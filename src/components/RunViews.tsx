@@ -297,7 +297,8 @@ function CallRow({ c }: { c: ModelCall }) {
             {!c.ok && <span className="trace-area" style={{ background: "var(--red-bg)", color: "var(--red)" }}>failed</span>}
           </div>
           <span className="trace-call-label">
-            Model call {c.n} · {(c.ms / 1000).toFixed(1)} s
+            Model call {c.n}
+            {c.keySlot ? ` · API key ${c.keySlot}` : ""} · {(c.ms / 1000).toFixed(1)} s
           </span>
         </div>
         <button className="text-button" onClick={() => setOpen(!open)} aria-expanded={open}>

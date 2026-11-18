@@ -38,6 +38,7 @@ In the web app, the first submit on an empty project is a full run and later sub
 | Variable | Meaning |
 |---|---|
 | `GEMINI_API_KEY` | Required. Server-side only (never `NEXT_PUBLIC_`). |
+| `GEMINI_API_KEY_2` … `_9` | Optional extra keys. Attempt order is each model on every key, then the next model: 3.5 Flash Lite (key 1 → key 2) → 3.1 Flash Lite (key 1 → key 2) → Gemma. A busy, rate-limited or invalid key is skipped. The trace shows "key 1/2" only, never the key. |
 | `GEMINI_MODEL` | Primary model. Default `gemini-3.5-flash-lite`. |
 | `GEMINI_MODELS` | Fallback chain, comma-separated. Default `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-a4b-it`. An overload, rate limit or timeout moves to the next model. Every attempt counts toward the 5-call limit and is traced with the model that answered. |
 | `GEMINI_THINKING_BUDGET` | Defaults to `0` on 2.5-flash models (no hidden thinking tokens). |

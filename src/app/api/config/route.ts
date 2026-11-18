@@ -14,6 +14,7 @@ export function GET() {
     model: llm.model,
     models: llm.models,
     hasKey: Boolean(llm.apiKey),
+    keyCount: llm.apiKeys.length,
     thinkingBudget: llm.thinkingBudget ?? null,
     judgePolicy: policy.judgePolicy,
     defaultStart: policy.defaultStart,

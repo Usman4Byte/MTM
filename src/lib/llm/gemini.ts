@@ -118,7 +118,8 @@ export class GeminiClient {
       ms: 0,
       ok: false,
     };
-    const timeoutMs = Math.max(1000, Math.min(45000, this.budget.msLeft() - 1500));
+    // cap each attempt so a slow model leaves time to fall back to the next one in the chain
+    const timeoutMs = Math.max(1000, Math.min(25000, this.budget.msLeft() - 1500));
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {

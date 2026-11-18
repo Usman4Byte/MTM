@@ -138,7 +138,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
 
   // ---------- 1. ingest (code) ----------
   const ing = await ingestAll(input.files, input.pasted);
-  for (const d of ing.docs) ev("file", `Read "${d.name}" as ${d.detectedType} (${d.sizeBytes} bytes, ${d.text.split("\n").length} lines).`);
+  for (const d of ing.docs) ev("file", `Read "${d.name}" as ${d.detectedType} (${d.sizeBytes} bytes, ${d.text.split("\n").length} lines).${d.cleanNote ? ` ${d.cleanNote}` : ""}`);
   for (const i of ing.issues) ev("error", `File "${i.name}" (${i.detectedType}) NOT read — ${i.problem}: ${i.detail}`);
   for (const w of ing.warnings) ev("error", w);
   if (!ing.docs.length) return finish(null, "No readable content was submitted.");

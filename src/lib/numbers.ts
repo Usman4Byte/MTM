@@ -19,6 +19,8 @@ export function numbersIn(text: string): Set<number> {
 
 /** True when value is written in the text (exactly, or as a scaled form). */
 export function isGrounded(value: number, text: string): boolean {
+  // zero ("delivery free", "muft") can never inflate a cost, so it needs no written figure
+  if (value === 0) return true;
   const nums = numbersIn(text);
   return nums.has(value) || [...nums].some((n) => Math.abs(n - value) < 0.5);
 }

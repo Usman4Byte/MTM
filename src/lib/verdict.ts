@@ -1,6 +1,6 @@
 // Plain-language summary of a run: did the plan change or stay, and why. Used by the UI and the text trace.
 
-import { describeFact } from "./facts";
+import { cleanReason, humanizeFact } from "./humanize";
 import { AREAS, type Area, type Fact, type Message, type ProjectState, type Run } from "./types";
 
 export interface MessageOutcome {
@@ -10,6 +10,12 @@ export interface MessageOutcome {
   status: Message["status"];
   /** one short human sentence */
   why: string;
+  /** plain-English facts now used in the plan */
+  used: string[];
+  /** plain-English facts that were rejected, with the reason */
+  rejected: { what: string; reason: string }[];
+  /** plain-English facts replaced by newer messages */
+  outdated: string[];
   facts: { id: string; what: string; status: Fact["status"]; reason?: string }[];
 }
 
@@ -33,21 +39,25 @@ export function runVerdict(run: Run, state: ProjectState): RunVerdict {
   const msgs = state.messages.filter((m) => m.runId === run.id);
   const outcomes: MessageOutcome[] = msgs.map((m) => {
     const fs = state.facts.filter((f) => f.msgId === m.id && f.kind !== "note");
-    const rejected = fs.filter((f) => f.status === "rejected");
-    const active = fs.filter((f) => f.status === "active");
+    const used = fs.filter((f) => f.status === "active").map(humanizeFact);
+    const rejected = fs.filter((f) => f.status === "rejected").map((f) => ({ what: humanizeFact(f), reason: cleanReason(f.reason) }));
+    const outdated = fs.filter((f) => f.status === "superseded").map(humanizeFact);
     let why: string;
-    if (m.status === "rejected") why = `Rejected — ${clean(rejected[0]?.reason)}`;
-    else if (m.status === "partial") why = `Partly rejected — ${rejected.map((f) => `${describeFact(f)}: ${clean(f.reason)}`).join("; ")}`;
-    else if (m.status === "superseded") why = "Out of date — a newer message about the same items replaced it.";
-    else if (m.status === "irrelevant") why = m.reasons[0] ?? "No planning information (irrelevant or information only).";
-    else why = `Accepted — used: ${active.map((f) => describeFact(f)).join("; ") || "information only"}.`;
+    if (m.status === "rejected") why = `Rejected: ${rejected[0]?.reason ?? "invalid"}`;
+    else if (m.status === "partial") why = `Partly rejected: ${rejected.map((r) => `${r.what} (${r.reason})`).join("; ")}`;
+    else if (m.status === "superseded") why = "Out of date: a newer message replaced it.";
+    else if (m.status === "irrelevant") why = m.reasons[0] ?? "Nothing for the plan (irrelevant or information only).";
+    else why = `Accepted. Used: ${used.join("; ") || "information only"}.`;
     return {
       id: m.id,
       from: m.from,
       text: m.text,
       status: m.status,
       why,
-      facts: fs.map((f) => ({ id: f.id, what: describeFact(f), status: f.status, reason: f.reason })),
+      used,
+      rejected,
+      outdated,
+      facts: fs.map((f) => ({ id: f.id, what: humanizeFact(f), status: f.status, reason: f.reason })),
     };
   });
   const modelAreas = [...new Set(run.calls.map((c) => c.area).filter((a): a is Area => (AREAS as readonly string[]).includes(a)))];
@@ -87,9 +97,6 @@ export function runVerdict(run: Run, state: ProjectState): RunVerdict {
   };
 }
 
-function clean(s?: string): string {
-  return (s ?? "invalid").replace(/^Reading check:\s*/i, "").replace(/\.\.+/g, ".");
-}
 
 export function formatVerdict(v: RunVerdict): string {
   const L: string[] = [];

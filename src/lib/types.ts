@@ -241,6 +241,8 @@ export interface NormalizedDoc {
   detectedType: string;
   sizeBytes: number;
   text: string;
+  /** set when the layout was cleaned (broken table lines, invisible characters); words are never changed */
+  cleanNote?: string;
 }
 
 export interface IngestIssue {

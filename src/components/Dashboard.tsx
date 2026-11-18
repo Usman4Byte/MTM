@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { newProject } from "@/lib/project";
+import { cleanText } from "@/lib/ingest/clean";
 import { formatPlan, formatTrace } from "@/lib/report";
 import { AREAS, type Area, type CallTag, type ProjectState, type Run } from "@/lib/types";
 import { runVerdict } from "@/lib/verdict";
@@ -69,6 +70,8 @@ export default function Dashboard() {
   const [showExport, setShowExport] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // live preview of exactly what the pipeline will read from the pasted text (same cleanup code as the server)
+  const cleaned = useMemo(() => (text.trim() ? cleanText(text) : null), [text]);
   const importInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -374,6 +377,36 @@ export default function Dashboard() {
               …or paste message text
             </label>
             <textarea id="paste" className="message-input" value={text} onChange={(e) => setText(e.target.value)} placeholder="Paste one or more messages exactly as received" />
+            {cleaned && cleaned.changed && (
+              <div className="panel" style={{ padding: 14, marginTop: 10, boxShadow: "none", background: "#fbfdf8" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", flexWrap: "wrap" }}>
+                  <span className="detail-label" style={{ margin: 0 }}>
+                    {cleaned.records ? `${cleaned.records} message${cleaned.records === 1 ? "" : "s"} detected` : "Cleaned for reading"}
+                  </span>
+                  <button className="button button-secondary" style={{ padding: "6px 10px" }} onClick={() => setText(cleaned.text)}>
+                    <Icon name="check" size={13} /> Replace with cleaned text
+                  </button>
+                </div>
+                <p className="muted-label" style={{ margin: "6px 0 8px", lineHeight: 1.5 }}>
+                  {cleaned.note} This is what the system reads, even if you don&apos;t replace it.
+                </p>
+                {cleaned.preview.length > 0 ? (
+                  <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6, fontSize: 12, maxHeight: 220, overflowY: "auto" }}>
+                    {cleaned.preview.map((p, i) => (
+                      <li key={i}>
+                        <b>{p.from}</b>
+                        {p.date && <span style={{ color: "var(--muted)" }}> · {p.date}</span>}
+                        <div style={{ color: "var(--muted)" }}>{p.text}</div>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <pre className="font-mono" style={{ margin: 0, fontSize: 11, maxHeight: 160, overflowY: "auto", color: "var(--muted)" }}>
+                    {cleaned.text}
+                  </pre>
+                )}
+              </div>
+            )}
             {mode === "update" && (
               <div className="panel" style={{ padding: 14, marginTop: 14, boxShadow: "none" }}>
                 <span className="detail-label">Your prediction (write it before submitting)</span>

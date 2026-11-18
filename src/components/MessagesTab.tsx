@@ -3,7 +3,7 @@
 // Messages tab in the ui/ design: message cards + detail drawer, wired to real messages, facts and reasons.
 
 import { useState } from "react";
-import { describeFact } from "@/lib/facts";
+import { humanizeFact } from "@/lib/humanize";
 import type { Message, ProjectState } from "@/lib/types";
 import { Icon } from "./ui/Icon";
 
@@ -135,7 +135,7 @@ export function MessagesTab({ project }: { project: ProjectState }) {
                   .filter((f) => f.msgId === selected.id)
                   .map((f) => (
                     <div key={f.id} style={{ fontSize: 12, padding: "8px 10px", borderRadius: 10, background: f.status === "active" ? "#eef8df" : f.status === "rejected" ? "var(--red-bg)" : "var(--amber-bg)" }}>
-                      <b className="font-mono">{f.id}</b> {describeFact(f)} ·{" "}
+                      <b>{humanizeFact(f)}</b> <span className="font-mono" style={{ color: "var(--muted)", fontSize: 10 }}>{f.id}</span> ·{" "}
                       <b style={{ color: f.status === "active" ? "var(--green-dark)" : f.status === "rejected" ? "var(--red)" : "var(--amber)" }}>
                         {f.status === "active" ? "used in plan" : f.status === "superseded" ? "out of date" : "rejected"}
                       </b>

@@ -68,19 +68,45 @@ export function RunCard({ run, project, title, children, compact }: { run: Run; 
         {v.outcomes.length > 0 && (
           <div>
             <Label>Why: what happened to each message</Label>
-            <ul className="space-y-1.5">
+            {v.outcomes.length > 3 && (
+              <p className="mb-2 text-xs text-muted">
+                {summaryLine(v.outcomes.map((o) => o.status))}
+              </p>
+            )}
+            <ul className="space-y-2">
               {v.outcomes.map((o) => (
-                <li key={o.id} className="rounded-lg border border-line p-2 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Pill tone={o.status}>{o.status}</Pill>
-                    <span className="font-mono text-xs text-muted">{o.id}</span>
-                    <span className="font-medium">{o.from}</span>
+                <li key={o.id} className={cx("rounded-xl border p-3", o.status === "rejected" || o.status === "partial" ? "border-bad/40 bg-bad-soft/40" : "border-line")}>
+                  <div className="flex items-center gap-2">
+                    <Pill tone={o.status}>{STATUS_WORD[o.status] ?? o.status}</Pill>
+                    <span className="truncate text-[13px] font-semibold">{o.from}</span>
+                    <span className="ml-auto font-mono text-[10px] text-muted">{o.id}</span>
                   </div>
-                  <div className="mt-1 text-xs italic text-muted">
-                    &ldquo;{o.text.replace(/\s+/g, " ").slice(0, 220)}
-                    {o.text.length > 220 ? "…" : ""}&rdquo;
-                  </div>
-                  <div className={cx("mt-1 text-xs", o.status === "rejected" || o.status === "partial" ? "font-medium text-bad" : "text-ink")}>{o.why}</div>
+                  {o.rejected.length > 0 && (
+                    <ul className="mt-2 space-y-1 text-xs text-bad">
+                      {o.rejected.map((r, i) => (
+                        <li key={i} className="leading-snug">
+                          <b>✗ {r.what}</b>
+                          <div className="text-[11px] text-bad/90">{r.reason}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {o.used.length > 0 && (
+                    <ul className="mt-2 space-y-0.5 text-xs leading-snug">
+                      {o.used.map((u, i) => (
+                        <li key={i}>
+                          <span className="text-ok">✓</span> {u}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {o.status === "superseded" && <p className="mt-2 text-xs text-warn">Out of date: a newer message replaced {o.outdated.join("; ") || "it"}.</p>}
+                  {o.status === "irrelevant" && <p className="mt-2 text-xs text-muted">Nothing for the plan (irrelevant or information only).</p>}
+                  {o.status === "partial" && o.outdated.length > 0 && <p className="mt-1 text-xs text-warn">Out of date: {o.outdated.join("; ")}</p>}
+                  <details className="mt-2">
+                    <summary className="text-[11px] font-semibold text-accent">Show original message</summary>
+                    <p className="mt-1 whitespace-pre-wrap rounded-lg bg-code p-2 text-xs text-muted">{o.text}</p>
+                  </details>
                 </li>
               ))}
             </ul>
@@ -319,4 +345,21 @@ function CallRow({ c }: { c: ModelCall }) {
       )}
     </article>
   );
+}
+
+const STATUS_WORD: Record<string, string> = {
+  accepted: "Accepted",
+  rejected: "Rejected",
+  partial: "Partly rejected",
+  superseded: "Out of date",
+  irrelevant: "Irrelevant",
+  pending: "Pending",
+};
+
+function summaryLine(statuses: string[]): string {
+  const c = statuses.reduce<Record<string, number>>((m, s) => ((m[s] = (m[s] ?? 0) + 1), m), {});
+  return (["accepted", "partial", "rejected", "superseded", "irrelevant"] as const)
+    .filter((k) => c[k])
+    .map((k) => `${c[k]} ${STATUS_WORD[k].toLowerCase()}`)
+    .join(" · ");
 }

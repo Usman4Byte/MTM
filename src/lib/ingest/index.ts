@@ -3,6 +3,9 @@
 // Nothing is skipped silently: every problem becomes an IngestIssue the UI/CLI shows.
 
 import type { IngestIssue, NormalizedDoc } from "../types";
+import { cleanText, parseDelimited, tableToLines } from "./clean";
+
+export { parseDelimited, tableToLines };
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
@@ -91,56 +94,6 @@ export function decodeText(bytes: Uint8Array): string {
   let t = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   if (t.charCodeAt(0) === 0xfeff) t = t.slice(1);
   return t.replace(/\r\n?/g, "\n");
-}
-
-/** Minimal RFC 4180 parser (quoted fields, escaped quotes, newlines in quotes). */
-export function parseDelimited(text: string, delim: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let field = "";
-  let quoted = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (quoted) {
-      if (c === '"') {
-        if (text[i + 1] === '"') {
-          field += '"';
-          i++;
-        } else quoted = false;
-      } else field += c;
-    } else if (c === '"' && field === "") quoted = true;
-    else if (c === delim) {
-      row.push(field);
-      field = "";
-    } else if (c === "\n") {
-      row.push(field);
-      rows.push(row);
-      row = [];
-      field = "";
-    } else field += c;
-  }
-  if (field !== "" || row.length) {
-    row.push(field);
-    rows.push(row);
-  }
-  return rows.filter((r) => r.some((f) => f.trim() !== ""));
-}
-
-/** Tables become one line per row, "Header: value | Header: value", so each row reads as one record. */
-export function tableToLines(rows: string[][]): string[] {
-  if (rows.length === 0) return [];
-  const header = rows[0].map((h) => h.trim());
-  const looksLikeHeader = rows.length > 1 && header.every((h) => h !== "" && h.length < 40 && !/^[\d.,\s]+$/.test(h));
-  const body = looksLikeHeader ? rows.slice(1) : rows;
-  return body.map((r) =>
-    r
-      .map((v, i) => {
-        const val = v.replace(/\s*\n\s*/g, " / ").trim();
-        return looksLikeHeader && header[i] ? `${header[i]}: ${val}` : val;
-      })
-      .filter((s) => s !== "" && !/:\s*$/.test(s))
-      .join(" | "),
-  );
 }
 
 function jsonToLines(value: unknown): string[] {
@@ -267,7 +220,16 @@ export async function ingestOne(input: RawInput): Promise<IngestResult> {
     if (text.trim() === "") {
       issues.push({ name: input.name, detectedType: type, problem: "empty", detail: "File contains no readable text." });
     } else {
-      return { docs: [{ name: input.name, detectedType: type, sizeBytes: size, text: text.trim() }], issues, warnings };
+      // prose-like formats can hold copied tables with broken lines: clean the layout (words unchanged)
+      let cleanNote: string | undefined;
+      if (["txt", "md", "pdf", "docx"].includes(type)) {
+        const c = cleanText(text);
+        if (c.changed) {
+          text = c.text;
+          cleanNote = c.note;
+        }
+      }
+      return { docs: [{ name: input.name, detectedType: type, sizeBytes: size, text: text.trim(), cleanNote }], issues, warnings };
     }
   }
   return { docs: [], issues, warnings };
@@ -276,8 +238,9 @@ export async function ingestOne(input: RawInput): Promise<IngestResult> {
 export async function ingestAll(inputs: RawInput[], pasted?: string): Promise<IngestResult> {
   const all: IngestResult = { docs: [], issues: [], warnings: [] };
   if (pasted && pasted.trim()) {
-    const t = pasted.replace(/\r\n?/g, "\n").trim();
-    all.docs.push({ name: "pasted text", detectedType: "text", sizeBytes: new TextEncoder().encode(t).length, text: t });
+    // pasted text often comes from a copied table: clean the layout exactly as the browser preview showed
+    const c = cleanText(pasted);
+    all.docs.push({ name: "pasted text", detectedType: "text", sizeBytes: new TextEncoder().encode(pasted).length, text: c.text.trim(), cleanNote: c.changed ? c.note : undefined });
   }
   for (const input of inputs) {
     const r = await ingestOne(input);

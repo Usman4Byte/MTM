@@ -12,7 +12,7 @@ import { newProject, runPipeline } from "../src/lib/agent/pipeline";
 import type { RawInput } from "../src/lib/ingest";
 import { llmConfigFromEnv } from "../src/lib/llm/gemini";
 import { policyFromEnv } from "../src/lib/planner";
-import { formatPlan, formatRun, formatTrace } from "../src/lib/report";
+import { formatPlan, formatRun, formatSummary, formatTrace } from "../src/lib/report";
 import type { ProjectState } from "../src/lib/types";
 
 for (const f of [".env.local", ".env"]) if (existsSync(f)) process.loadEnvFile(f);
@@ -69,6 +69,7 @@ async function main() {
   writeFileSync(join(OUT_DIR, "trace.json"), JSON.stringify(next.runs, null, 2));
   if (plan) {
     writeFileSync(join(OUT_DIR, "plan.md"), formatPlan(plan, next));
+    writeFileSync(join(OUT_DIR, "summary.txt"), formatSummary(plan, next));
     writeFileSync(join(OUT_DIR, "plan.json"), JSON.stringify(plan, null, 2));
   }
 
@@ -78,7 +79,7 @@ async function main() {
   }
   const all = next.runs.reduce((s, r) => s + r.totals.totalTokens, 0);
   console.log(`\nAll runs so far: ${next.runs.reduce((s, r) => s + r.calls.length, 0)} model calls, ${all} tokens (API-reported).`);
-  console.log(`Saved: runs/plan.md, runs/plan.json, runs/trace.txt, runs/trace.json (state: .mtm/state.json)`);
+  console.log(`Saved: runs/summary.txt, runs/plan.md, runs/plan.json, runs/trace.txt, runs/trace.json (state: .mtm/state.json)`);
   if (run.aborted) process.exitCode = 1;
 }
 

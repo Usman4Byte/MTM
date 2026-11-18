@@ -46,6 +46,8 @@ export function humanizeFact(f: Pick<Fact, "kind" | "label" | "num" | "price" | 
       return `${L}: ${rs(f.price)} per head`;
     case "food_fee":
       return n === 0 ? `${L || "delivery"} is free` : `${L || "catering fee"} ${rs(n)}`;
+    case "food_fee_pct":
+      return `${L || "service charge"} ${n}% of the food bill`;
     case "food_order_qty":
       return `order of ${n} meals`;
     case "food_special":

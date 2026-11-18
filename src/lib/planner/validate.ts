@@ -100,8 +100,10 @@ export function validatePlan(plan: Plan, active: Fact[], policy: PlannerPolicy):
     } else ven.push(`${v.label} seats ${v.capacity} ≥ ${need} needed.`);
     for (const r of many("venue_require")) {
       const need2 = normLabel(r.text ?? r.label);
-      const has = [...v.features, v.label].some((f) => {
+      const optText = active.find((f) => f.id === v.factId)?.text ?? "";
+      const has = [...v.features, v.label, optText].some((f) => {
         const x = normLabel(f);
+        if (!x || !need2) return false;
         return x === need2 || x.includes(need2) || need2.includes(x);
       });
       if (!has) {

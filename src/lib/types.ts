@@ -23,13 +23,14 @@ export const FACT_KINDS = {
   cost: { area: "budget", doc: "a required cost that must be paid from the budget (label, num)" },
   request: { area: "budget", doc: "optional ask that nobody with authority approved (label, num)" },
   // venue
-  venue_option: { area: "venue", doc: "a bookable space (label=name, num=seats, price=Rs, features)" },
-  venue_require: { area: "venue", doc: "an organiser DEMANDS the venue have this feature (text). A hall merely having a feature goes in venue_option features" },
+  venue_option: { area: "venue", doc: "a bookable space (label=name, num=seats, price=Rs, features=every feature stated for it as short tags, e.g. ramp access, ground floor, generator)" },
+  venue_require: { area: "venue", doc: "an organiser DEMANDS the venue have this feature (text = the venue feature tag that satisfies it, e.g. step-free access -> ramp access). A hall merely having a feature goes in venue_option features" },
   venue_exclude: { area: "venue", doc: "this venue cannot be used (label=name, text=why)" },
   venue_min_capacity: { area: "venue", doc: "venue must seat at least this many (num)" },
   // food
   food_option: { area: "food", doc: "a meal option (label=name, price=Rs per head)" },
-  food_fee: { area: "food", doc: "extra catering charge such as delivery (label, num=Rs)" },
+  food_fee: { area: "food", doc: "extra catering charge in Rs such as delivery (label, num=Rs; 0 if free)" },
+  food_fee_pct: { area: "food", doc: "catering charge given as a percent of the food bill, e.g. 10% service charge (label, num=percent)" },
   food_order_qty: { area: "food", doc: "a stated number of meals/boxes ordered (num)" },
   food_special: { area: "food", doc: "special meals inside the headcount, e.g. vegetarian (label, num=count, price optional)" },
   food_use: { area: "food", doc: "an instruction to serve a specific option (label=option name)" },

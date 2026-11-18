@@ -118,3 +118,17 @@ test("a cost correction replaces the committed item with the same name", () => {
   const b = f("cost", { label: "printing", num: 15000 });
   assert.equal(a.key, b.key);
 });
+
+test("a venue with no description text does not satisfy a requirement it lacks", () => {
+  const facts = [...base().filter((x) => x.kind !== "venue_option"), f("venue_option", { label: "plain hall", num: 200, price: 50000 }), f("venue_option", { label: "ramp hall", num: 200, price: 80000, features: ["ramp access"] }), f("venue_require", { text: "ramp access" })];
+  const p = buildPlan(facts, 1, 1, DEFAULT_POLICY);
+  assert.equal(p.venue.chosen?.label, "ramp hall");
+  assert.ok(p.valid);
+});
+
+test("percentage service charge is costed on the food bill", () => {
+  const p = buildPlan([...base(), f("food_fee_pct", { label: "service charge", num: 10 })], 1, 1, DEFAULT_POLICY);
+  const line = p.budget.lines.find((l) => l.label.includes("service charge"));
+  assert.equal(line?.amount, Math.round((134 * 1500) / 10));
+  assert.ok(p.valid, JSON.stringify(p.checks.filter((c) => !c.pass)));
+});

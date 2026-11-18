@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { newProject } from "@/lib/project";
-import { formatPlan, formatTrace } from "@/lib/report";
+import { formatPlan, formatSummary, formatTrace } from "@/lib/report";
 import { AREAS, type Area, type CallTag, type ProjectState, type Run } from "@/lib/types";
 import { runVerdict } from "@/lib/verdict";
 import { MessagesTab } from "./MessagesTab";
@@ -139,8 +139,10 @@ export default function Dashboard() {
   };
 
   const addFiles = (list: FileList | null) => {
-    if (!list) return;
-    setFiles((cur) => [...cur, ...Array.from(list)]);
+    if (!list || !list.length) return;
+    // copy now: the FileList is emptied as soon as the input is reset, before React runs the updater
+    const picked = Array.from(list);
+    setFiles((cur) => [...cur, ...picked]);
   };
 
   // A file dropped anywhere on the page opens the upload dialog with it, instead of the browser
@@ -236,6 +238,7 @@ export default function Dashboard() {
   ];
 
   const exportItems: [string, () => void, boolean][] = [
+    ["Summary: plan + trace (.txt)", () => latest && download(`plan-summary-v${latest.version}.txt`, formatSummary(latest, project)), !!latest],
     ["Plan (.md)", () => latest && download(`plan-v${latest.version}.md`, formatPlan(latest, project)), !!latest],
     ["Plan (.json)", () => latest && download(`plan-v${latest.version}.json`, JSON.stringify(latest, null, 2), "application/json"), !!latest],
     ["Trace (.txt)", () => download("trace.txt", formatTrace(project)), project.runs.length > 0],
@@ -415,8 +418,8 @@ export default function Dashboard() {
               accept={ACCEPT}
               className="sr-only"
               onChange={(e) => {
-                addFiles(e.target.files);
-                e.target.value = "";
+                addFiles(e.target.files); // copies the files first
+                e.target.value = ""; // then allow picking the same file again
               }}
             />
             <label htmlFor="file-upload" className={cx("dropzone", drag && "is-drag")} style={{ display: "block" }}>

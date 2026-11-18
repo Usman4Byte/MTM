@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { humanizeFact } from "@/lib/humanize";
 import { rs } from "@/lib/planner/time";
-import { formatPlan } from "@/lib/report";
+import { formatPlan, formatSummary } from "@/lib/report";
 import type { CheckResult, Fact, Plan, ProjectState, Run } from "@/lib/types";
 import { runVerdict } from "@/lib/verdict";
 import { download } from "./RunViews";
@@ -194,7 +194,10 @@ export function PlanTab({
           <span className="summary-meta-note">
             <Icon name="check" size={14} /> {passed}/6 checks pass
           </span>
-          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+          <button className="button button-primary" style={{ padding: "8px 11px", marginTop: 10 }} onClick={() => download(`plan-summary-v${plan.version}.txt`, formatSummary(plan, project))}>
+            <Icon name="download" size={14} /> Download summary (.txt)
+          </button>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
             <button className="button button-secondary" style={{ padding: "6px 9px" }} onClick={() => download(`plan-v${plan.version}.md`, formatPlan(plan, project))}>
               <Icon name="download" size={13} /> .md
             </button>

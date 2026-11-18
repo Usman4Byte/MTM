@@ -97,3 +97,72 @@ export function formatPlan(plan: Plan, state?: ProjectState): string {
   }
   return L.join("\n");
 }
+
+const PURPOSE: Record<string, string> = {
+  reading: "reading messages",
+  venue: "venue",
+  schedule: "schedule",
+  food: "food",
+  judging: "judging",
+  budget: "budget",
+};
+
+/** One-page summary: the plan in five areas + one line per AI call + total. */
+export function formatSummary(plan: Plan, state: ProjectState): string {
+  const L: string[] = [];
+  const pad = (s: string | number, n: number) => String(s).padEnd(n);
+  const lpad = (s: string | number, n: number) => String(s).padStart(n);
+  const h = plan.headcount;
+  const rule = "=".repeat(64);
+  L.push(rule);
+  L.push("HACKATHON PLAN — SUMMARY");
+  L.push(`Plan version ${plan.version} · ${plan.valid ? "VALID (all six checks pass)" : "NOT VALID"} · ${new Date(plan.createdAt).toLocaleString()}`);
+  L.push(rule);
+
+  L.push("", "1. VENUE");
+  if (plan.venue.chosen) {
+    L.push(`   Hall:   ${plan.venue.chosen.label}`);
+    L.push(`   Seats:  ${plan.venue.chosen.capacity} (needed: ${h.total} = ${h.students} students + ${h.judges} judges + ${h.staff} staff${h.extra.map((e) => ` + ${e.num} ${e.label}`).join("")})`);
+    L.push(`   Cost:   ${rs(plan.venue.chosen.price)}`);
+    if (plan.venue.requirements.length > 1) L.push(`   Meets:  ${plan.venue.requirements.slice(1).join(", ")}`);
+  } else L.push("   No venue fits.");
+
+  L.push("", `2. SCHEDULE (${plan.schedule.start}–${plan.schedule.end}, ${plan.schedule.durationMin} min)`);
+  for (const i of plan.schedule.items) L.push(`   ${i.start}–${i.end}  ${i.label} (${i.minutes} min)`);
+
+  L.push("", "3. FOOD");
+  if (plan.food.option) {
+    L.push(`   Box type:  ${plan.food.option.label} (${rs(plan.food.option.price)} per head)`);
+    L.push(`   Quantity:  ${plan.food.ordered}`);
+    for (const s of plan.food.specials) L.push(`   Includes:  ${s.count} ${s.label} @ ${rs(s.price)}`);
+    for (const f of plan.food.fees) L.push(`   Plus:      ${f.label} ${f.amount === 0 ? "free" : rs(f.amount)}`);
+    L.push(`   Cost:      ${rs(plan.food.cost)}`);
+  } else L.push("   No meal option.");
+
+  const j = plan.judging;
+  L.push("", "4. JUDGING");
+  L.push(`   Judges:  ${j.used} (${j.confirmed ?? "?"} confirmed, ${j.reserves ?? 0} reserve) for ${j.teams} teams`);
+  L.push(`   Cost:    ${j.used} × ${rs(j.honorarium)} = ${j.used !== null && j.honorarium !== null ? rs(j.used * j.honorarium) : "?"}`);
+
+  L.push("", "5. BUDGET");
+  for (const l of plan.budget.lines) L.push(`   ${pad(l.label, 40)}${lpad(rs(l.amount), 14)}`);
+  L.push(`   ${"-".repeat(54)}`);
+  L.push(`   ${pad("TOTAL", 40)}${lpad(rs(plan.budget.total), 14)}`);
+  const fits = plan.budget.cap !== null && plan.budget.total <= plan.budget.cap;
+  L.push(`   Against ${rs(plan.budget.cap)}: ${fits ? `FITS (${rs(plan.budget.remaining)} left)` : `OVER by ${rs(-(plan.budget.remaining ?? 0))}`}`);
+
+  L.push("", "TRACE (one line per AI call)");
+  L.push(`   ${pad("#", 4)}${pad("Model", 26)}${pad("For", 18)}${lpad("Tokens", 8)}`);
+  let total = 0;
+  let calls = 0;
+  for (const r of state.runs)
+    for (const c of r.calls) {
+      calls++;
+      total += c.usage.totalTokens ?? 0;
+      L.push(`   ${pad(c.n, 4)}${pad(c.model, 26)}${pad(PURPOSE[c.area] ?? c.area, 18)}${lpad(c.usage.totalTokens ?? "n/a", 8)}${c.ok ? "" : "  (failed attempt)"}`);
+    }
+  L.push(`   ${"-".repeat(56)}`);
+  L.push(`   TOTAL: ${calls} call${calls === 1 ? "" : "s"}, ${total.toLocaleString("en-US")} tokens (as reported by the API)`);
+  L.push(rule);
+  return L.join("\n") + "\n";
+}

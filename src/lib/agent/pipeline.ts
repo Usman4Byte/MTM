@@ -8,7 +8,7 @@
 // that receives a constraint the reading call could not express as a standard fact. Nothing else
 // calls the model. Updates are capped at 5 calls (retries included) and 60 s.
 
-import { activeFacts, describeFact, factKey, refreshMessageStatuses, resolveSupersession, isNewer } from "../facts";
+import { activeFacts, describeFact, factKey, normLabel, refreshMessageStatuses, resolveSupersession, isNewer } from "../facts";
 import { ingestAll, numberLines, type RawInput } from "../ingest";
 import { CallBudget, GeminiClient, type LlmConfig } from "../llm/gemini";
 import { buildPlan, type PlannerPolicy } from "../planner";
@@ -36,6 +36,24 @@ import { AREA_SCHEMA, READING_SCHEMA, areaSystemPrompt, areaUserPrompt, readingS
 export const MANUAL_ENTRY = "Manual entry (organiser)";
 
 /** Kinds whose num is an amount of money (checked against the message text). */
+/** True when the sentence says the feature is ABSENT: "no projector", "without a ramp", "lift nahi hai". */
+function negated(sentence: string, words: string[]): boolean {
+  const w = words[0];
+  if (!w) return false;
+  const words_ = sentence.split(/\s+/).filter(Boolean);
+  const NEG_BEFORE = /^(no|not|without|lack|lacks|lacking|nahi|nahin|bina)$/;
+  const NEG_AFTER = /^(nahi|nahin|unavailable)$/;
+  return words_.some((x, i) => {
+    if (x !== w) return false;
+    const pre = words_.slice(Math.max(0, i - 3), i);
+    const post = words_.slice(i + 1, i + 4);
+    return pre.some((p) => NEG_BEFORE.test(p)) || post.some((p) => NEG_AFTER.test(p)) || (post[0] === "not" && post[1] === "available");
+  });
+}
+
+/** Organiser requirements: never auto-rejected in a full run (an unmeetable one is a reported conflict). */
+const REQUIREMENT_KINDS = new Set<FactKind>(["venue_require", "venue_min_capacity", "break", "block", "end_by", "judges_min", "lunch_min"]);
+
 const MONEY_KINDS = new Set<FactKind>(["budget_total", "committed", "cost", "request", "food_fee", "honorarium"]);
 
 export const LIMITS = {
@@ -289,6 +307,79 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     list.push({ msg: refToId.get(String(c.msg))!, text: c.text! });
     byArea.set(c.area as Area, list);
   }
+  // Feature grounding: a feature the model gives a venue must be stated in a sentence that names that
+  // venue ("Only Halls 2 and 3 … ramp access" gives ramp access to Halls 2 and 3, never to Hall 1).
+  for (const m of newMessages) {
+    const opts = newFacts.filter((f) => f.msgId === m.id && f.kind === "venue_option" && f.status === "active");
+    if (!opts.length) continue;
+    const sentences = m.text.split(/(?<=[.!?])\s+|\n+/).map((x) => ` ${normLabel(x)} `);
+    for (const o of opts) {
+      if (!o.features?.length) continue;
+      const own = normLabel(o.label).split(" ").filter(Boolean);
+      const others = opts.filter((x) => x !== o).map((x) => normLabel(x.label).split(" "));
+      const distinct = own.filter((t) => !others.every((ws) => ws.includes(t)) || !others.length);
+      const kept = o.features.filter((feat) => {
+        const fw = normLabel(feat).split(" ").filter(Boolean);
+        const where = sentences.filter((s) => fw.every((w) => s.includes(` ${w} `)));
+        if (!where.length) return true; // paraphrased tag: cannot check, keep it
+        return where.some((s) => distinct.some((t) => s.includes(` ${t} `)) && !negated(s, fw));
+      });
+      const dropped = o.features.filter((x) => !kept.includes(x));
+      if (dropped.length) {
+        o.features = kept;
+        ev("reject", `${o.id}: removed "${dropped.join(", ")}" from ${o.label}: the message does not say ${o.label} has it.`, { msgId: m.id, factId: o.id });
+      }
+    }
+  }
+
+  // Requirement grounding (both directions): a venue has a required feature when a sentence of its own
+  // message names that venue and contains the requirement's words. Adds features the model forgot.
+  {
+    const allOpts = [...state.facts, ...newFacts].filter((f) => f.kind === "venue_option" && f.status === "active");
+    const reqs = [...state.facts, ...newFacts].filter((f) => f.kind === "venue_require" && f.status === "active");
+    const msgText = (id: string) => [...state.messages, ...newMessages].find((m) => m.id === id)?.text ?? "";
+    for (const r of reqs) {
+      const rw = normLabel(r.text ?? r.label).split(" ").filter(Boolean);
+      if (!rw.length) continue;
+      for (const o of allOpts) {
+        const siblings = allOpts.filter((x) => x !== o && x.msgId === o.msgId).map((x) => normLabel(x.label).split(" "));
+        const own = normLabel(o.label).split(" ").filter(Boolean);
+        const distinct = siblings.length ? own.filter((t) => !siblings.every((ws) => ws.includes(t))) : own;
+        const said = msgText(o.msgId)
+          .split(/(?<=[.!?])\s+|\n+/)
+          .map((x) => ` ${normLabel(x)} `)
+          .some(
+            (s) =>
+              rw.every((w) => s.includes(` ${w} `)) &&
+              distinct.some((t) => s.includes(` ${t} `)) &&
+              !negated(s, rw), // "Lotus Room … (no projector)" does NOT have a projector
+          );
+        const tag = r.text ?? r.label!;
+        if (said && !(o.features ?? []).some((x) => normLabel(x) === normLabel(tag))) {
+          o.features = [...(o.features ?? []), tag];
+          ev("info", `${o.id}: ${o.label} has "${tag}" (stated in ${o.msgId}), added from the message text.`, { factId: o.id });
+        }
+      }
+    }
+  }
+
+  // A venue requirement whose wording matches no venue feature (e.g. "step-free access" vs "ramp access")
+  // needs meaning, not string matching: route it to one venue call.
+  {
+    const opts = [...state.facts, ...newFacts].filter((f) => f.kind === "venue_option" && f.status === "active");
+    for (const r of newFacts.filter((f) => f.kind === "venue_require" && f.status === "active")) {
+      const need = normLabel(r.text ?? r.label);
+      const hit = opts.some((o) => [...(o.features ?? []), o.label ?? "", o.text ?? ""].some((x) => {
+        const h = normLabel(x);
+        return h && need && (h === need || h.includes(need) || need.includes(h));
+      }));
+      if (!hit && opts.length) {
+        const list = byArea.get("venue") ?? [];
+        list.push({ msg: r.msgId, text: `Requirement ${r.id} "${r.text ?? r.label}" matches no venue's wording. Venues: ${opts.map((o) => `${o.id} ${o.label} [${[...(o.features ?? []), o.text ?? ""].filter(Boolean).join("; ")}]`).join(" | ")}. Venue messages (the source text): ${[...new Set(opts.map((o) => o.msgId))].map((id) => `"${[...state.messages, ...newMessages].find((m) => m.id === id)?.text ?? ""}"`).join(" ")}. Return venue_require with text equal to the feature that satisfies it and replaces=${r.id}, plus venue_option with replaces=<its id> and that feature in features for each venue that has it; or say unsupported.` });
+        byArea.set("venue", list);
+      }
+    }
+  }
   ev("route", byArea.size ? `Area calls needed for: ${[...byArea.keys()].join(", ")} (constraints that no standard fact kind covers).` : "No area calls needed: every constraint fit a standard fact kind; planning is done in code.");
   // plan state before area calls, so the area model sees the current area section
   state.facts.push(...newFacts);
@@ -341,7 +432,11 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   let guard = 0;
   while (!plan.valid && guard++ < 4) {
     const failing = plan.checks.filter((c) => !c.pass);
-    const kinds = new Set(failing.flatMap((c) => (mode === "full" && c.id === "budget" ? [] : IMPLICATED[c.id])));
+    // Requirements stated by organisers are never dropped just to make a full run pass: an unmeetable
+    // requirement is a real conflict and is reported as such.
+    const kinds = new Set(
+      failing.flatMap((c) => (mode === "full" && c.id === "budget" ? [] : IMPLICATED[c.id])).filter((k) => !(mode === "full" && REQUIREMENT_KINDS.has(k))),
+    );
     const pool = state.facts
       .filter((f) => f.status === "active" && kinds.has(f.kind) && (mode === "full" || runFactIds.has(f.id)))
       .sort((a, b) => {

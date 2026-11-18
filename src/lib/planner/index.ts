@@ -65,8 +65,10 @@ class FactView {
 
 function featureMatch(have: string[], need: string): boolean {
   const n = normLabel(need);
+  if (!n) return false;
   return have.some((h) => {
     const x = normLabel(h);
+    if (!x) return false; // an empty value must never "contain" a requirement
     return x === n || x.includes(n) || n.includes(x);
   });
 }
@@ -145,7 +147,7 @@ export function buildPlan(active: Fact[], version: number, runId: number, policy
       if (o.num === undefined) why.push("capacity unknown");
       else if (o.num < minCap) why.push(`seats ${o.num} < ${minCap} needed`);
       if (o.price === undefined) why.push("price unknown");
-      for (const r of requires) if (!featureMatch([...(o.features ?? []), o.label ?? ""], r)) why.push(`no ${r}`);
+      for (const r of requires) if (!featureMatch([...(o.features ?? []), o.label ?? "", o.text ?? ""], r)) why.push(`no ${r}`);
       const ex = excluded.get(normLabel(o.label));
       if (ex !== undefined) why.push(`excluded: ${ex}`);
       if (why.length) rejectedOptions.push({ label: o.label!, why: why.join("; ") });
@@ -158,6 +160,7 @@ export function buildPlan(active: Fact[], version: number, runId: number, policy
   const use = v.one("food_use");
   const specials = v.many("food_special").filter((f) => (f.num ?? 0) > 0);
   const fees = v.many("food_fee").filter((f) => (f.num ?? 0) > 0);
+  const pctFees = v.many("food_fee_pct").filter((f) => (f.num ?? 0) > 0);
   const orderQty = v.num("food_order_qty");
   const meals = total;
   const ordered = orderQty ?? meals;
@@ -172,7 +175,8 @@ export function buildPlan(active: Fact[], version: number, runId: number, policy
     if (!opt || ordered === null) return null;
     const normal = Math.max(0, ordered - specialCount) * opt.price!;
     const sp = specials.reduce((s, f) => s + (f.num ?? 0) * (f.price ?? opt.price!), 0);
-    return normal + sp + fees.reduce((s, f) => s + (f.num ?? 0), 0);
+    const meals = normal + sp;
+    return meals + pctFees.reduce((s, f) => s + Math.round((meals * (f.num ?? 0)) / 100), 0) + fees.reduce((s, f) => s + (f.num ?? 0), 0);
   };
 
   // ---------- fixed costs ----------
@@ -215,6 +219,9 @@ export function buildPlan(active: Fact[], version: number, runId: number, policy
     lines.push({ area: "food", label: `Meals: ${chosenFood.label}`, amount: normal * chosenFood.price!, formula: `${normal} × ${rs(chosenFood.price)}`, factIds: [chosenFood.id] });
     for (const s of specials)
       lines.push({ area: "food", label: `Meals: ${s.label}`, amount: s.num! * (s.price ?? chosenFood.price!), formula: `${s.num} × ${rs(s.price ?? chosenFood.price)}`, factIds: [s.id] });
+    const mealsTotal = lines.filter((l) => l.area === "food").reduce((s, l) => s + l.amount, 0);
+    for (const f of pctFees)
+      lines.push({ area: "food", label: `Catering: ${f.label ?? "service charge"}`, amount: Math.round((mealsTotal * f.num!) / 100), formula: `${f.num}% of ${rs(mealsTotal)}`, factIds: [f.id] });
     for (const f of fees) lines.push({ area: "food", label: `Catering: ${f.label}`, amount: f.num!, formula: rs(f.num), factIds: [f.id] });
   }
   if (judgeCost > 0) {
@@ -326,7 +333,13 @@ export function buildPlan(active: Fact[], version: number, runId: number, policy
       meals,
       ordered,
       specials: specials.map((s) => ({ label: s.label ?? "special", count: s.num!, price: s.price ?? chosenFood?.price ?? 0 })),
-      fees: fees.map((f) => ({ label: f.label ?? "fee", amount: f.num! })),
+      fees: [
+        ...pctFees.map((f) => {
+          const base = Math.max(0, (ordered ?? 0) - specialCount) * (chosenFood?.price ?? 0) + specials.reduce((s, x) => s + (x.num ?? 0) * (x.price ?? chosenFood?.price ?? 0), 0);
+          return { label: `${f.label ?? "service charge"} (${f.num}%)`, amount: Math.round((base * f.num!) / 100) };
+        }),
+        ...fees.map((f) => ({ label: f.label ?? "fee", amount: f.num! })),
+      ],
       cost: foodCost(chosenFood),
       alternatives: foodOpts.filter((o) => o !== chosenFood).map((o) => `${o.label} ${rs(o.price)}/head`),
     },

@@ -72,7 +72,7 @@ async function main() {
     writeFileSync(join(OUT_DIR, "plan.json"), JSON.stringify(plan, null, 2));
   }
 
-  console.log(formatRun(run));
+  console.log(formatRun(run, { state: next }));
   if (plan) {
     console.log("\n" + formatPlan(plan, next));
   }

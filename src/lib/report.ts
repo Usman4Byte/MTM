@@ -2,12 +2,17 @@
 
 import { rs } from "./planner/time";
 import type { Plan, ProjectState, Run } from "./types";
+import { formatVerdict, runVerdict } from "./verdict";
 
 const n = (x: number | null) => (x === null ? "n/a" : String(x));
 
-export function formatRun(run: Run, opts: { full?: boolean } = {}): string {
+export function formatRun(run: Run, opts: { full?: boolean; state?: ProjectState } = {}): string {
   const out: string[] = [];
   out.push(`================ RUN ${run.id} (${run.mode}) — ${run.startedAt} — ${(run.ms / 1000).toFixed(1)} s ================`);
+  if (opts.state) {
+    out.push(formatVerdict(runVerdict(run, opts.state)));
+    out.push("");
+  }
   out.push(`Limits: ${run.limits.maxCalls} model calls, ${run.limits.maxMs / 1000} s. Used: ${run.calls.length} calls. Areas with model calls: ${run.areasCalled.join(", ") || "none"}.`);
   for (const c of run.calls) {
     out.push("");
@@ -37,7 +42,7 @@ export function formatRun(run: Run, opts: { full?: boolean } = {}): string {
 }
 
 export function formatTrace(state: ProjectState): string {
-  const runs = state.runs.map((r) => formatRun(r)).join("\n\n");
+  const runs = state.runs.map((r) => formatRun(r, { state })).join("\n\n");
   const t = state.runs.reduce(
     (s, r) => ({ c: s.c + r.calls.length, p: s.p + r.totals.promptTokens, o: s.o + r.totals.outputTokens, th: s.th + r.totals.thoughtsTokens, tt: s.tt + r.totals.totalTokens }),
     { c: 0, p: 0, o: 0, th: 0, tt: 0 },

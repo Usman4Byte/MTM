@@ -126,7 +126,7 @@ conflict resolver (code): if a new fact breaks a check, reject it, keep the vali
 3. An **area call** (`venue` / `schedule` / `food` / `judging` / `budget`) happens **only** when a message has a constraint that the standard fact kinds cannot express. One call per such area (e.g. "lunch in 3 sittings of 20 min" → `schedule`).
 4. A failed call is retried once if the limit allows. Retries count toward the 5. If the limit or time runs out, the plan stays as it was and the trace says why.
 
-So for a typical update the prediction is **"reading only"**. The web app has a prediction box that is checked against the areas that actually made calls.
+So for a typical update the prediction is **"reading only"**. In the web app, tick the planning areas you expect to make *extra* calls before submitting (reading is always 1 call, so it is not a choice). Each run card then shows **Predicted vs Actual → ✓ MATCH / ✗ MISMATCH**, and every run starts with a plain verdict: plan kept or changed, and why, message by message.
 
 How to tell which facts are standard: see `FACT_KINDS` in `src/lib/types.ts`. If a message's constraint fits one of those lines, the model emits it during reading and no area call happens.
 

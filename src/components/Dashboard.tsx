@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { newProject } from "@/lib/project";
 import { rs } from "@/lib/planner/time";
-import { formatPlan, formatRun, formatTrace } from "@/lib/report";
-import { AREAS, CALL_TAGS, type CallTag, type Fact, type Message, type Plan, type ProjectState, type Run } from "@/lib/types";
+import { formatPlan } from "@/lib/report";
+import { AREAS, type Area, type CallTag, type Fact, type Message, type Plan, type ProjectState, type Run } from "@/lib/types";
+import { HistoryView, RunCard, TraceView } from "./RunViews";
 
 // ---------------- local (browser) storage ----------------
 const STORE_KEY = "mtm-planner:v1";
@@ -79,7 +80,7 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [saveWarn, setSaveWarn] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("plan");
-  const [prediction, setPrediction] = useState<CallTag[]>(["reading"]);
+  const [prediction, setPrediction] = useState<Area[]>([]);
   const [viewVersion, setViewVersion] = useState<number | null>(null);
   const [drag, setDrag] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -133,13 +134,13 @@ export default function Dashboard() {
       const res = await fetch("/api/run", { method: "POST", body: fd });
       const data = (await res.json()) as { state?: ProjectState; run?: Run; error?: string };
       if (!res.ok || !data.state || !data.run) throw new Error(data.error ?? `Server returned ${res.status}`);
-      const run: Run = { ...data.run, prediction: mode === "update" ? prediction : undefined, inputs: [...files.map((f) => f.name), ...(text.trim() ? ["pasted text"] : [])] };
+      const run: Run = { ...data.run, prediction: mode === "update" ? (prediction as CallTag[]) : undefined, inputs: [...files.map((f) => f.name), ...(text.trim() ? ["pasted text"] : [])] };
       const next: ProjectState = { ...data.state, runs: [...project.runs, run] };
       setProject(next);
       setFiles([]);
       setText("");
       setViewVersion(null);
-      setPrediction(["reading"]);
+      setPrediction([]);
       if (run.aborted) setError(`Run stopped: ${run.aborted}`);
     } catch (e) {
       setError((e as Error).message);
@@ -269,20 +270,22 @@ export default function Dashboard() {
               className="mt-1 w-full rounded-lg border border-line bg-bg p-2 font-mono text-xs outline-none focus:border-accent"
             />
             {mode === "update" && (
-              <div className="mt-3 rounded-lg border border-line p-2">
-                <div className="mb-1 text-xs font-medium">Your prediction: which areas will make model calls?</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {CALL_TAGS.map((t) => (
-                    <label key={t} className={cx("flex cursor-pointer items-center gap-1 rounded-full border px-2 py-0.5 text-xs", prediction.includes(t) ? "border-accent bg-soft text-accent" : "border-line text-muted")}>
-                      <input
-                        type="checkbox"
-                        className="sr-only"
-                        checked={prediction.includes(t)}
-                        onChange={(e) => setPrediction(e.target.checked ? [...prediction, t] : prediction.filter((x) => x !== t))}
-                      />
+              <div className="mt-3 rounded-lg border border-line p-2.5">
+                <div className="text-xs font-semibold">Your prediction (write it before submitting)</div>
+                <p className="mt-0.5 text-[11px] text-muted">
+                  Every submit always makes <b className="text-ink">1 reading call</b>, so there is nothing to predict for reading. Tick the planning areas you expect to make <i>extra</i> model calls. Leave all unticked for &quot;reading only&quot;.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {AREAS.map((t) => (
+                    <label key={t} className={cx("flex cursor-pointer items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs", prediction.includes(t) ? "border-accent bg-soft text-accent" : "border-line text-muted")}>
+                      <input type="checkbox" className="sr-only" checked={prediction.includes(t)} onChange={(e) => setPrediction(e.target.checked ? [...prediction, t] : prediction.filter((x) => x !== t))} />
+                      {prediction.includes(t) ? "✓ " : ""}
                       {t}
                     </label>
                   ))}
+                </div>
+                <div className="mt-1.5 text-[11px]">
+                  Prediction: <b>reading{prediction.length ? ` + ${prediction.join(", ")}` : " only"}</b>
                 </div>
               </div>
             )}
@@ -355,12 +358,14 @@ export default function Dashboard() {
             <Stat label="Tokens (API-reported)" value={totals.tokens.toLocaleString()} sub={lastRun ? `last run ${lastRun.totals.totalTokens.toLocaleString()} · ${(lastRun.ms / 1000).toFixed(1)} s` : "—"} />
           </section>
 
+          {lastRun && <RunCard run={lastRun} project={project} title="Latest run" />}
+
           <nav className="flex flex-wrap gap-1 rounded-xl border border-line bg-card p-1 text-sm" role="tablist">
             {(
               [
                 ["plan", "Plan"],
                 ["messages", `Messages (${project.messages.length})`],
-                ["changes", "Changes"],
+                ["changes", `Run history (${project.runs.length})`],
                 ["trace", `Trace (${totals.calls} calls)`],
               ] as [Tab, string][]
             ).map(([k, l]) => (
@@ -377,7 +382,7 @@ export default function Dashboard() {
               <Empty text="No plan yet. Load a message pack on the left. The first submit is a full run." />
             ))}
           {tab === "messages" && <MessagesView project={project} />}
-          {tab === "changes" && <ChangesView project={project} />}
+          {tab === "changes" && <HistoryView project={project} />}
           {tab === "trace" && <TraceView project={project} />}
         </main>
       </div>
@@ -727,171 +732,4 @@ function MessageCard({ m, project }: { m: Message; project: ProjectState }) {
       )}
     </article>
   );
-}
-
-function ChangesView({ project }: { project: ProjectState }) {
-  const runs = [...project.runs].reverse();
-  if (!runs.length) return <Empty text="No runs yet." />;
-  return (
-    <div className="space-y-3">
-      {runs.map((r) => (
-        <section key={r.id} className="card p-4">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-            <b>Run {r.id}</b>
-            <Badge tone={r.mode === "full" ? "bg-soft text-accent" : "bg-warn-soft text-warn"}>{r.mode}</Badge>
-            <span className="text-muted">
-              {r.planChanged ? `→ plan v${r.planVersion}` : `plan unchanged (v${r.planVersion ?? "—"})`} · calls: {r.areasCalled.join(", ") || "none"}
-            </span>
-            {r.inputs && <span className="text-xs text-muted">· {r.inputs.join(", ")}</span>}
-          </div>
-          {r.changes.length ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-line text-left text-xs text-muted">
-                    <th className="py-1 pr-2 font-medium">Area</th>
-                    <th className="py-1 pr-2 font-medium">Field</th>
-                    <th className="py-1 pr-2 font-medium">Before</th>
-                    <th className="py-1 font-medium">After</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {r.changes.map((c, i) => (
-                    <tr key={i} className="border-b border-line/60 align-top">
-                      <td className="py-1 pr-2 text-xs text-muted">{c.area}</td>
-                      <td className="py-1 pr-2">{c.field}</td>
-                      <td className="py-1 pr-2 text-xs text-bad">{c.from}</td>
-                      <td className="py-1 text-xs text-ok">{c.to}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <p className="text-sm text-muted">No change to the plan{r.events.some((e) => e.kind === "reject") ? ". The submitted message was rejected, so the valid plan stayed as it was." : "."}</p>
-          )}
-          {r.events.filter((e) => e.kind === "reject" || e.kind === "conflict").length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-xs text-bad">
-              {r.events
-                .filter((e) => e.kind === "reject" || e.kind === "conflict")
-                .map((e, i) => (
-                  <li key={i}>⚠ {e.text}</li>
-                ))}
-            </ul>
-          )}
-        </section>
-      ))}
-    </div>
-  );
-}
-
-const EVENT_STYLE: Record<string, string> = {
-  reject: "text-bad",
-  conflict: "text-bad",
-  error: "text-warn",
-  supersede: "text-warn",
-  accept: "text-ok",
-  route: "text-accent",
-};
-
-function TraceView({ project }: { project: ProjectState }) {
-  const runs = [...project.runs].reverse();
-  const g = project.runs.reduce(
-    (s, r) => ({ c: s.c + r.calls.length, p: s.p + r.totals.promptTokens, o: s.o + r.totals.outputTokens, th: s.th + r.totals.thoughtsTokens, t: s.t + r.totals.totalTokens }),
-    { c: 0, p: 0, o: 0, th: 0, t: 0 },
-  );
-  return (
-    <div className="space-y-3">
-      <div className="card flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
-        <span className="num">
-          <b>Grand total:</b> {g.c} calls · input {g.p.toLocaleString()} · output {g.o.toLocaleString()} · thinking {g.th.toLocaleString()} · <b>total {g.t.toLocaleString()} tokens</b>
-        </span>
-        <div className="flex gap-2 text-xs">
-          <button className="rounded-lg border border-line px-2 py-1 hover:border-accent" onClick={() => download("trace.txt", formatTrace(project))}>
-            Trace .txt
-          </button>
-          <button className="rounded-lg border border-line px-2 py-1 hover:border-accent" onClick={() => download("trace.json", JSON.stringify(project.runs, null, 2), "application/json")}>
-            Trace .json
-          </button>
-        </div>
-      </div>
-      {!runs.length && <Empty text="No model calls yet." />}
-      {runs.map((r) => {
-        const predOk = r.prediction ? sameSet(r.prediction, r.areasCalled) : null;
-        return (
-          <section key={r.id} className="card p-4">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <b>Run {r.id}</b>
-              <Badge tone={r.mode === "full" ? "bg-soft text-accent" : "bg-warn-soft text-warn"}>{r.mode}</Badge>
-              <span className="text-muted">
-                {new Date(r.startedAt).toLocaleTimeString()} · {(r.ms / 1000).toFixed(1)} s / {r.limits.maxMs / 1000} s · {r.calls.length} / {r.limits.maxCalls} calls · {r.totals.totalTokens.toLocaleString()} tokens
-              </span>
-              {r.aborted && <Badge tone="rejected">stopped</Badge>}
-              {predOk !== null && (
-                <span className={cx("ml-auto rounded-full px-2 py-0.5 text-xs", predOk ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad")}>
-                  prediction {r.prediction!.join(", ")} → actual {r.areasCalled.join(", ") || "none"} {predOk ? "✓" : "✗"}
-                </span>
-              )}
-            </div>
-            <ul className="mt-2 space-y-0.5 font-mono text-[11px]">
-              {r.events.map((e, i) => (
-                <li key={i} className={EVENT_STYLE[e.kind] ?? "text-muted"}>
-                  [{e.kind}] {e.text}
-                </li>
-              ))}
-            </ul>
-            <div className="mt-3 space-y-2">
-              {r.calls.map((c) => (
-                <details key={c.n} className="rounded-lg border border-line">
-                  <summary className="flex flex-wrap items-center gap-2 p-2 text-xs">
-                    <b className="font-mono">#{c.n}</b>
-                    <span className="rounded bg-soft px-1.5 py-0.5 font-semibold text-accent">{c.area}</span>
-                    <span className="font-mono">{c.model}</span>
-                    <span className="text-muted">attempt {c.attempt}</span>
-                    <span className="text-muted">{c.ms} ms</span>
-                    <span className="num ml-auto font-mono">
-                      in {c.usage.promptTokens ?? "n/a"} · out {c.usage.outputTokens ?? "n/a"} · think {c.usage.thoughtsTokens ?? "n/a"} · total <b>{c.usage.totalTokens ?? "n/a"}</b>
-                    </span>
-                    {!c.ok && <Badge tone="rejected">failed</Badge>}
-                  </summary>
-                  <div className="grid gap-2 border-t border-line p-2 lg:grid-cols-2">
-                    <div>
-                      <div className="mb-1 text-[11px] font-semibold text-muted">INPUT</div>
-                      <pre className="max-h-96 overflow-auto rounded bg-code p-2 font-mono text-[11px]">{c.input}</pre>
-                    </div>
-                    <div>
-                      <div className="mb-1 text-[11px] font-semibold text-muted">OUTPUT {c.error && <span className="text-bad">— {c.error}</span>}</div>
-                      <pre className="max-h-96 overflow-auto rounded bg-code p-2 font-mono text-[11px]">{prettyJson(c.output)}</pre>
-                    </div>
-                  </div>
-                </details>
-              ))}
-            </div>
-            <div className="num mt-2 text-right text-xs text-muted">
-              Run total: input {r.totals.promptTokens.toLocaleString()} · output {r.totals.outputTokens.toLocaleString()} · thinking {r.totals.thoughtsTokens.toLocaleString()} · <b className="text-ink">total {r.totals.totalTokens.toLocaleString()}</b>
-            </div>
-            <details className="mt-2">
-              <summary className="text-xs text-accent">Show this run as plain text</summary>
-              <pre className="mt-1 max-h-96 overflow-auto rounded bg-code p-2 font-mono text-[11px]">{formatRun(r, { full: false })}</pre>
-            </details>
-          </section>
-        );
-      })}
-      <p className="text-xs text-muted">Areas checked against the allowed tags: {CALL_TAGS.join(", ")}. Planning areas: {AREAS.join(", ")}.</p>
-    </div>
-  );
-}
-
-function sameSet(a: string[], b: string[]) {
-  const x = new Set(a);
-  const y = new Set(b);
-  return x.size === y.size && [...x].every((v) => y.has(v));
-}
-
-function prettyJson(s: string) {
-  try {
-    return JSON.stringify(JSON.parse(s), null, 1);
-  } catch {
-    return s;
-  }
 }

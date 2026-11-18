@@ -273,12 +273,6 @@ export default function Dashboard() {
           </section>
         )}
 
-        {lastRun && (
-          <div style={{ marginBottom: 30 }}>
-            <RunCard run={lastRun} project={project} title="Latest run" />
-          </div>
-        )}
-
         <nav className="tab-nav" aria-label="Dashboard sections">
           {tabs.map((t) => (
             <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}>
@@ -288,6 +282,13 @@ export default function Dashboard() {
           ))}
         </nav>
 
+        <div className={cx("workspace-grid", !lastRun && "no-aside")}>
+        {lastRun && (
+          <aside className="run-aside" aria-label="Latest run">
+            <RunCard run={lastRun} project={project} title="Latest run" compact />
+          </aside>
+        )}
+        <div className="workspace-main">
         {tab === "plan" &&
           (shown ? (
             <PlanTab plan={shown} project={project} versions={project.plans.map((p) => p.version)} onVersion={(v) => setViewVersion(v)} latestVersion={latest!.version} lastRun={lastRun} />
@@ -309,6 +310,8 @@ export default function Dashboard() {
             onDelete={deleteProj}
           />
         )}
+        </div>
+        </div>
         <input ref={importInput} type="file" accept="application/json,.json" className="hidden" onChange={(e) => (importProj(e.target.files?.[0]), (e.target.value = ""))} />
       </div>
 

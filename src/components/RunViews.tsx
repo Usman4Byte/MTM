@@ -40,7 +40,7 @@ export function download(name: string, content: string, type = "text/plain") {
 }
 
 /** The readable story of one run: result, why (per message), what changed, calls made, prediction check, problems. */
-export function RunCard({ run, project, title, children }: { run: Run; project: ProjectState; title?: string; children?: React.ReactNode }) {
+export function RunCard({ run, project, title, children, compact }: { run: Run; project: ProjectState; title?: string; children?: React.ReactNode; compact?: boolean }) {
   const v = runVerdict(run, project);
   const tone = run.aborted ? "border-bad bg-bad-soft" : run.mode === "update" && v.kept ? "border-warn bg-warn-soft" : "border-ok bg-ok-soft";
   const retries = run.calls.filter((c) => c.attempt > 1).length;
@@ -100,7 +100,7 @@ export function RunCard({ run, project, title, children }: { run: Run; project: 
           )}
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className={cx("grid gap-2", !compact && "sm:grid-cols-2")}>
           <div className="rounded-lg border border-line p-2 text-xs">
             <Label>Model calls made</Label>
             <b>{v.readingCalls} reading</b> (always){" "}

@@ -13,7 +13,8 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${montserrat.variable} ${mono.variable}`}>
-      <body>{children}</body>
+      {/* browser extensions (e.g. ColorZilla's cz-shortcut-listen) add attributes to <body> before React loads */}
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

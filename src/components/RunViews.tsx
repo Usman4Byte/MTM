@@ -3,9 +3,11 @@
 // Readable run views: each run tells its story first (plan kept or changed, and why),
 // then shows every model call with its input/output one click away.
 
+import { useState } from "react";
 import { formatRun, formatTrace } from "@/lib/report";
 import type { ModelCall, ProjectState, Run } from "@/lib/types";
 import { runVerdict } from "@/lib/verdict";
+import { Icon } from "./ui/Icon";
 
 function cx(...c: (string | false | null | undefined)[]) {
   return c.filter(Boolean).join(" ");
@@ -255,42 +257,66 @@ function prettyJson(s: string) {
 }
 
 function CallRow({ c }: { c: ModelCall }) {
+  const [open, setOpen] = useState(false);
   const summary = c.ok ? summarizeOutput(c) : [];
   return (
-    <details className="rounded-lg border border-line">
-      <summary className="p-2 text-xs">
-        <div className="flex flex-wrap items-center gap-2">
-          <b className="font-mono">▸ Call #{c.n}</b>
-          <span className="rounded bg-soft px-1.5 py-0.5 font-semibold text-accent">area: {c.area}</span>
-          <span>
-            model: <b className="font-mono">{c.model}</b>
+    <article className="trace-card panel" style={{ boxShadow: "none" }}>
+      <div className="trace-card-header">
+        <div className="call-number">{String(c.n).padStart(2, "0")}</div>
+        <div className="trace-title">
+          <div>
+            <strong className="font-mono">{c.model}</strong>
+            <span className="trace-area">{c.area}</span>
+            {c.attempt > 1 && <span className="trace-area" style={{ background: "var(--amber-bg)", color: "var(--amber)" }}>retry {c.attempt}</span>}
+            {!c.ok && <span className="trace-area" style={{ background: "var(--red-bg)", color: "var(--red)" }}>failed</span>}
+          </div>
+          <span className="trace-call-label">
+            Model call {c.n} · {(c.ms / 1000).toFixed(1)} s
           </span>
-          {c.attempt > 1 && <span className="text-warn">retry (attempt {c.attempt})</span>}
-          <span className="text-muted">{(c.ms / 1000).toFixed(1)} s</span>
-          <Pill tone={c.ok ? "accepted" : "rejected"}>{c.ok ? "ok" : "failed"}</Pill>
-          <span className="num ml-auto font-mono">
-            tokens in {c.usage.promptTokens ?? "n/a"} · out {c.usage.outputTokens ?? "n/a"} · thinking {c.usage.thoughtsTokens ?? "n/a"} · total <b>{c.usage.totalTokens ?? "n/a"}</b>
+        </div>
+        <button className="text-button" onClick={() => setOpen(!open)} aria-expanded={open}>
+          {open ? "Collapse" : "Expand"}
+          <span className={open ? "rotate-arrow" : ""}>
+            <Icon name="arrow" size={15} />
           </span>
-        </div>
-        {c.error && <div className="mt-1 text-bad">Error: {c.error}</div>}
-        {summary.length > 0 && (
-          <ul className="mt-1 space-y-0.5 text-muted">
-            {summary.map((x, i) => (
-              <li key={i}>→ {x}</li>
-            ))}
-          </ul>
-        )}
-      </summary>
-      <div className="grid gap-2 border-t border-line p-2 lg:grid-cols-2">
-        <div>
-          <div className="mb-1 text-[11px] font-semibold text-muted">INPUT sent to the model</div>
-          <pre className="max-h-96 overflow-auto rounded bg-code p-2 font-mono text-[11px]">{c.input}</pre>
-        </div>
-        <div>
-          <div className="mb-1 text-[11px] font-semibold text-muted">OUTPUT returned by the model</div>
-          <pre className="max-h-96 overflow-auto rounded bg-code p-2 font-mono text-[11px]">{prettyJson(c.output)}</pre>
-        </div>
+        </button>
       </div>
-    </details>
+      <div className="trace-tokens">
+        <span>
+          Input <strong>{c.usage.promptTokens ?? "n/a"}</strong> tokens
+        </span>
+        <span>
+          Output <strong>{c.usage.outputTokens ?? "n/a"}</strong> tokens
+        </span>
+        <span>
+          Thinking <strong>{c.usage.thoughtsTokens ?? "n/a"}</strong>
+        </span>
+        <span>
+          Total <strong>{c.usage.totalTokens ?? "n/a"}</strong> (API-reported)
+        </span>
+      </div>
+      {(summary.length > 0 || c.error) && (
+        <div className="trace-tokens" style={{ display: "block", marginTop: -8 }}>
+          {c.error && <div style={{ color: "var(--red)" }}>Error: {c.error}</div>}
+          {summary.map((x, i) => (
+            <div key={i} style={{ marginTop: 3 }}>
+              → {x}
+            </div>
+          ))}
+        </div>
+      )}
+      {open && (
+        <div className="trace-detail">
+          <div>
+            <span className="detail-label">Input sent to the model</span>
+            <pre className="max-h-96 overflow-auto rounded bg-code p-2 font-mono text-[11px]">{c.input}</pre>
+          </div>
+          <div>
+            <span className="detail-label">Output returned by the model</span>
+            <pre className="max-h-96 overflow-auto rounded bg-code p-2 font-mono text-[11px]">{prettyJson(c.output)}</pre>
+          </div>
+        </div>
+      )}
+    </article>
   );
 }

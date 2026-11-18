@@ -143,6 +143,29 @@ export default function Dashboard() {
     setFiles((cur) => [...cur, ...Array.from(list)]);
   };
 
+  // A file dropped anywhere on the page opens the upload dialog with it, instead of the browser
+  // navigating away to the file. Drops inside the open dialog are handled there (defaultPrevented).
+  useEffect(() => {
+    const over = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      if (!e.dataTransfer?.files.length) return;
+      if (e.defaultPrevented) return;
+      e.preventDefault();
+      const dropped = Array.from(e.dataTransfer.files);
+      setFiles((cur) => [...cur, ...dropped]);
+      setError(null);
+      setShowIngest(true);
+    };
+    window.addEventListener("dragover", over);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", over);
+      window.removeEventListener("drop", drop);
+    };
+  }, []);
+
   const newProj = () => {
     const p = newProject(`Plan ${Object.keys(store?.projects ?? {}).length + 1}`);
     setStore((s) => (s ? { activeId: p.id, projects: { ...s.projects, [p.id]: p } } : s));
@@ -347,7 +370,28 @@ export default function Dashboard() {
 
       {showIngest && (
         <div className="overlay" role="presentation" onMouseDown={(e) => !busy && e.target === e.currentTarget && setShowIngest(false)}>
-          <section className="modal modal-wide panel" role="dialog" aria-modal="true" aria-labelledby="ingest-title">
+          <section
+            className="modal modal-wide panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ingest-title"
+            // the whole dialog accepts dropped files, not only the dashed box
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes("Files")) {
+                e.preventDefault();
+                setDrag(true);
+              }
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDrag(false);
+            }}
+            onDrop={(e) => {
+              if (!e.dataTransfer.files.length) return;
+              e.preventDefault();
+              setDrag(false);
+              addFiles(e.dataTransfer.files);
+            }}
+          >
             <div className="modal-header">
               <div>
                 <div className="section-kicker">{mode === "full" ? "Full run" : "Update"}</div>
@@ -362,22 +406,28 @@ export default function Dashboard() {
                 ? `This project is empty, so the next submit reads the whole pack and builds the first plan (limit ${cfg?.limits.full.maxMs ? cfg.limits.full.maxMs / 1000 : 120} s).`
                 : `A plan exists, so this submit updates it: max ${cfg?.limits.update.maxCalls ?? 5} model calls including retries, ${cfg?.limits.update.maxMs ? cfg.limits.update.maxMs / 1000 : 60} s. A wrong message is rejected and the valid plan is kept.`}
             </p>
-            <div
-              className={cx("dropzone", drag && "is-drag")}
-              onDragOver={(e) => (e.preventDefault(), setDrag(true))}
-              onDragLeave={() => setDrag(false)}
-              onDrop={(e) => (e.preventDefault(), setDrag(false), addFiles(e.dataTransfer.files))}
-              onClick={() => fileInput.current?.click()}
-            >
+            {/* a native label opens the file picker by itself (no scripted click); the input sits outside it */}
+            <input
+              ref={fileInput}
+              id="file-upload"
+              type="file"
+              multiple
+              accept={ACCEPT}
+              className="sr-only"
+              onChange={(e) => {
+                addFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <label htmlFor="file-upload" className={cx("dropzone", drag && "is-drag")} style={{ display: "block" }}>
               <div style={{ display: "flex", justifyContent: "center", color: "var(--green)", marginBottom: 6 }}>
                 <Icon name="upload" size={22} />
               </div>
-              <strong style={{ fontSize: 13 }}>Drop files or click to choose</strong>
+              <strong style={{ fontSize: 13 }}>Drop files anywhere here, or click to choose</strong>
               <div className="muted-label" style={{ marginTop: 4 }}>
                 TXT · CSV · MD · JSON · PDF · DOCX · XLSX — type is detected automatically
               </div>
-              <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => (addFiles(e.target.files), (e.target.value = ""))} />
-            </div>
+            </label>
             {files.length > 0 && (
               <div className="tag-list" style={{ marginTop: 10 }}>
                 {files.map((f, i) => (

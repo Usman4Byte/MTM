@@ -24,7 +24,7 @@ export const FACT_KINDS = {
   request: { area: "budget", doc: "optional ask that nobody with authority approved (label, num)" },
   // venue
   venue_option: { area: "venue", doc: "a bookable space (label=name, num=seats, price=Rs, features)" },
-  venue_require: { area: "venue", doc: "the venue must have this feature (text)" },
+  venue_require: { area: "venue", doc: "an organiser DEMANDS the venue have this feature (text). A hall merely having a feature goes in venue_option features" },
   venue_exclude: { area: "venue", doc: "this venue cannot be used (label=name, text=why)" },
   venue_min_capacity: { area: "venue", doc: "venue must seat at least this many (num)" },
   // food

@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+
+# next.js / build
+.next/
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# local env and secrets (never commit keys)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# local CLI state and generated run output
+.mtm/
+runs/
+
+# vercel
+.vercel/
+
+# os / editor
+.DS_Store
+Thumbs.db
+*.log

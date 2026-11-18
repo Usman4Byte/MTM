@@ -14,6 +14,7 @@ import { CallBudget, GeminiClient, type LlmConfig } from "../llm/gemini";
 import { buildPlan, type PlannerPolicy } from "../planner";
 import { diffPlans } from "../planner/diff";
 import { rs } from "../planner/time";
+import { isGrounded } from "../numbers";
 import {
   AREAS,
   FACT_KINDS,
@@ -30,6 +31,12 @@ import {
   type TraceEvent,
 } from "../types";
 import { AREA_SCHEMA, READING_SCHEMA, areaSystemPrompt, areaUserPrompt, readingSystemPrompt, readingUserPrompt } from "./prompts";
+
+/** Label for text typed or pasted into the tool without a sender: the organisers themselves. */
+export const MANUAL_ENTRY = "Manual entry (organiser)";
+
+/** Kinds whose num is an amount of money (checked against the message text). */
+const MONEY_KINDS = new Set<FactKind>(["budget_total", "committed", "cost", "request", "food_fee", "honorarium"]);
 
 export const LIMITS = {
   full: { maxCalls: 10, maxMs: 120_000, safetyMs: 110_000 },
@@ -176,7 +183,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       id: `M${++state.counters.msg}`,
       runId,
       seq: state.counters.msg,
-      from: from || "unknown sender",
+      // text typed/pasted into the tool with no sender is the organisers' own manual entry
+      from: !from || /^(unknown|unknown sender|n\/?a|none|-)$/i.test(from.trim()) ? (doc.detectedType === "text" ? MANUAL_ENTRY : "unknown sender") : from,
       date: date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
       relevance,
       text: ls.map((l) => l.text).join("\n").trim(),
@@ -243,9 +251,17 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     };
     const replaced = rf.replaces ? existingById.get(rf.replaces) ?? newFacts.find((x) => x.id === rf.replaces) : undefined;
     f.key = replaced && replaced.kind === f.kind ? replaced.key : factKey(f);
+    const srcText = state.messages.find((m) => m.id === msgId)?.text ?? newMessages.find((m) => m.id === msgId)?.text ?? "";
+    const ungrounded = [
+      ...(f.price !== undefined && !isGrounded(f.price, srcText) ? [f.price] : []),
+      ...(MONEY_KINDS.has(f.kind) && f.num !== undefined && !isGrounded(f.num, srcText) ? [f.num] : []),
+    ];
     if ((f.num !== undefined && f.num < 0) || (f.price !== undefined && f.price < 0)) {
       f.status = "rejected";
       f.reason = "Negative number is not a valid value.";
+    } else if (ungrounded.length) {
+      f.status = "rejected";
+      f.reason = `Model misread: Rs ${ungrounded.join(", ")} is not written in the message, so this figure was not used.`;
     } else if (rf.reject) {
       f.status = "rejected";
       f.reason = `Reading check: ${rf.reject}`;

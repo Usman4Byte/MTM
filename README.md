@@ -144,6 +144,11 @@ The sample says **20 judges confirmed** and the practice message says the event 
 - **Schedule template:** opening 10 min, lunch 30 min, closing 15 min, at least 60 min of build time. Judging runs as one parallel block at the end (teams per judge × minutes per team). Breaks with a stated time are fixed there.
 - **Start time:** 10:00 unless a message states one, or a stated "end by" time works it out.
 
+## Guarding against model mistakes
+
+- **Numbers are checked against the message.** Every money figure the model extracts (prices, budget, costs, fees, honoraria) must actually be written in its source message. "Rs 800", "1,200", "50k" and "6.5 lakh" all count. A figure that isn't there (e.g. 80000 read from "Rs 800") is rejected as a *model misread* and shown in the trace, never used in the plan.
+- **Manual entries.** Text typed or pasted into the tool without a sender is labelled **"Manual entry (organiser)"** and treated as an organiser instruction. Packs and files keep their own senders.
+
 ## Safety
 
 - Uploaded content is wrapped as `<data>` and the system prompt says it is never an instruction. On top of that, code checks every fact, so an "override" message cannot make a failing plan pass.

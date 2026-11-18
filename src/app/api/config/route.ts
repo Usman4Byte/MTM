@@ -12,6 +12,7 @@ export function GET() {
   const policy = policyFromEnv();
   return NextResponse.json({
     model: llm.model,
+    models: llm.models,
     hasKey: Boolean(llm.apiKey),
     thinkingBudget: llm.thinkingBudget ?? null,
     judgePolicy: policy.judgePolicy,

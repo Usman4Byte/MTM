@@ -6,20 +6,29 @@ import type { CallTag, ModelCall } from "../types";
 
 export interface LlmConfig {
   apiKey: string;
+  /** primary model (first of the chain) */
   model: string;
+  /** fallback chain: attempt k uses models[k-1] (last one repeats). Overload/rate-limit/timeout moves down the chain. */
+  models: string[];
   /** thinking budget for Gemini 2.5 models; 0 disables thinking (fewer tokens). Ignored when undefined. */
   thinkingBudget?: number;
 }
 
 export function llmConfigFromEnv(): LlmConfig {
   const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY ?? "";
-  const model = (process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite").trim();
+  const chain = (process.env.GEMINI_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean);
+  const primary = (process.env.GEMINI_MODEL ?? "").trim();
+  const models = [...new Set([...(primary ? [primary] : []), ...(chain.length ? chain : DEFAULT_CHAIN)])];
+  const model = models[0];
   const tb = process.env.GEMINI_THINKING_BUDGET;
   let thinkingBudget: number | undefined;
   if (tb !== undefined && tb !== "") thinkingBudget = Number(tb);
   else if (/gemini-2\.5-flash/.test(model)) thinkingBudget = 0;
-  return { apiKey, model, thinkingBudget };
+  return { apiKey, model, models, thinkingBudget };
 }
+
+/** Fastest/leanest first (benchmarked on the sample pack), then higher-availability fallbacks. */
+export const DEFAULT_CHAIN = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemma-4-26b-a4b-it"];
 
 export class CallBudgetExceeded extends Error {}
 export class DeadlineExceeded extends Error {}
@@ -60,8 +69,8 @@ export class GeminiClient {
     private onCall: (c: ModelCall) => void,
   ) {}
 
-  /** One logical request, retried at most once if budget and time allow. */
-  async callJson(req: CallRequest, maxAttempts = 2): Promise<unknown> {
+  /** One logical request. Failed attempts move down the model chain while budget and time allow. */
+  async callJson(req: CallRequest, maxAttempts = 3): Promise<unknown> {
     let lastErr = "";
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       if (this.budget.remaining() <= 0) throw new CallBudgetExceeded(`model-call limit of ${this.budget.maxCalls} reached`);
@@ -78,27 +87,29 @@ export class GeminiClient {
   private async attempt(req: CallRequest, attempt: number): Promise<CallOutcome> {
     this.budget.used++;
     const n = this.nextCallNumber();
+    const model = this.cfg.models[Math.min(attempt - 1, this.cfg.models.length - 1)] ?? this.cfg.model;
+    const gemma = /^gemma/i.test(model);
     const t0 = Date.now();
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.cfg.model)}:generateContent`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
     const generationConfig: Record<string, unknown> = {
       temperature: 0,
       responseMimeType: "application/json",
       responseSchema: req.schema,
     };
-    if (this.cfg.thinkingBudget !== undefined && Number.isFinite(this.cfg.thinkingBudget)) {
+    if (gemma) delete generationConfig.responseSchema; // Gemma: JSON mode only; the prompt describes the shape
+    if (!gemma && /gemini-2\.5/.test(model) && this.cfg.thinkingBudget !== undefined && Number.isFinite(this.cfg.thinkingBudget)) {
       generationConfig.thinkingConfig = { thinkingBudget: this.cfg.thinkingBudget };
     }
-    const body = {
-      systemInstruction: { parts: [{ text: req.system }] },
-      contents: [{ role: "user", parts: [{ text: req.user }] }],
-      generationConfig,
-    };
-    const input = `[system]\n${req.system}\n\n[user]\n${req.user}`;
+    // Gemma has no system role: the rules go first in the user turn instead.
+    const body = gemma
+      ? { contents: [{ role: "user", parts: [{ text: `${req.system}\n\nReply with JSON only, shaped as: ${JSON.stringify(req.schema)}\n\n${req.user}` }] }], generationConfig }
+      : { systemInstruction: { parts: [{ text: req.system }] }, contents: [{ role: "user", parts: [{ text: req.user }] }], generationConfig };
+    const input = gemma ? `[user]\n${body.contents[0].parts[0].text}` : `[system]\n${req.system}\n\n[user]\n${req.user}`;
     const base: ModelCall = {
       n,
       runId: this.runId,
-      model: this.cfg.model,
-      requestedModel: this.cfg.model,
+      model,
+      requestedModel: model,
       area: req.area,
       attempt,
       input,
@@ -143,7 +154,7 @@ export class GeminiClient {
       const text = (data?.candidates?.[0]?.content?.parts ?? []).map((p) => p.text ?? "").join("");
       base.output = text;
       try {
-        const json = JSON.parse(text);
+        const json = JSON.parse(text.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, ""));
         base.ok = true;
         return { json, call: base };
       } catch {

@@ -38,10 +38,23 @@ In the web app, the first submit on an empty project is a full run and later sub
 | Variable | Meaning |
 |---|---|
 | `GEMINI_API_KEY` | Required. Server-side only (never `NEXT_PUBLIC_`). |
-| `GEMINI_MODEL` | Model used for **every** call. Default `gemini-2.5-flash-lite`. |
+| `GEMINI_MODEL` | Primary model. Default `gemini-3.5-flash-lite`. |
+| `GEMINI_MODELS` | Fallback chain, comma-separated. Default `gemini-3.5-flash-lite,gemini-3.1-flash-lite,gemma-4-26b-a4b-it`. An overload, rate limit or timeout moves to the next model. Every attempt counts toward the 5-call limit and is traced with the model that answered. |
 | `GEMINI_THINKING_BUDGET` | Defaults to `0` on 2.5-flash models (no hidden thinking tokens). |
 | `MTM_JUDGE_POLICY` | `minimum` (default) or `all_confirmed`. See *Judges vs meals*. |
 | `MTM_DEFAULT_START` | Start time used only when no message gives one (default `10:00`). |
+
+**Why these models** (benchmarked on the sample pack, same prompt, 2 runs each, 18 Nov 2026):
+
+| Model | Free limits (RPM / RPD) | Full run | Tokens | Checks |
+|---|---|---|---|---|
+| gemini-3.5-flash-lite | 15 / 500 | 3.3–5.2 s | 2,510–3,249 | 6/6 |
+| gemini-3.1-flash-lite | 15 / 500 | 7.2–10.2 s | 3,142 | 6/6 |
+| gemma-4-26b-a4b-it | 30 / 14,400 | returned 503 (overloaded) during testing | — | — |
+
+Flash and Pro models are limited to 20 requests per day on this key, which is too few for testing plus judging. `gemini-2.5-flash-lite` is retired for new keys. Gemma has the highest daily limit, so it is the last fallback. Its 16K tokens/minute cap still fits one run of about 3K tokens.
+
+**No embedding model.** Files are converted to text with deterministic parsers (PDF text layer, DOCX, XLSX, CSV, JSON). Embeddings turn text into vectors for *search*. They don't read files, and a pack of about 10 messages has nothing to search. Adding them would add model calls and tokens (hurting the token score) and add a part we could not justify to the judges.
 
 **Bonus (small-model list):** the 10-point bonus needs *every* call to use a model on the organizers' small-model list. **We do not assume any Gemini model qualifies.** Get the approved list from the help desk and set `GEMINI_MODEL` to a model on it. The trace prints the model name the API reports for each call (`modelVersion`), so you can check it.
 

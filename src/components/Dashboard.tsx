@@ -31,6 +31,7 @@ function saveStore(s: Store): string | null {
 
 interface ServerConfig {
   model: string;
+  models: string[];
   hasKey: boolean;
   thinkingBudget: number | null;
   judgePolicy: string;
@@ -204,7 +205,7 @@ export default function Dashboard() {
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
           <span className="rounded-full border border-line bg-card px-3 py-1">
-            Model: <b className="font-mono">{cfg?.model ?? "…"}</b>
+            Models: <b className="font-mono">{cfg?.models?.join(" → ") ?? "…"}</b>
           </span>
           <span className={cx("rounded-full px-3 py-1 font-medium", cfg?.hasKey ? "bg-ok-soft text-ok" : "bg-bad-soft text-bad")}>{cfg ? (cfg.hasKey ? "Gemini key set (server)" : "GEMINI_API_KEY missing") : "checking server…"}</span>
           <span className="rounded-full border border-line bg-card px-3 py-1">Saved in this browser</span>

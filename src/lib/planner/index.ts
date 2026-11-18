@@ -319,7 +319,7 @@ function layoutSchedule(
   const seq: Slot[] = [
     { label: "Opening & briefing", kind: "opening", minutes: policy.openingMin, elastic: false, factIds: [] },
     { label: "Build (hacking)", kind: "build", minutes: 0, elastic: true, factIds: [] },
-    ...(hasMeal ? [{ label: "Lunch", kind: "meal" as const, minutes: policy.lunchMin, elastic: false, factIds: [] }] : []),
+    ...(hasMeal ? [{ label: "Lunch", kind: "meal" as const, minutes: v.num("lunch_min") ?? policy.lunchMin, elastic: false, factIds: v.one("lunch_min") ? [v.one("lunch_min")!.id] : [] }] : []),
     ...floatingBreaks,
     { label: "Build (hacking)", kind: "build", minutes: 0, elastic: true, factIds: [] },
     ...floatingBlocks,

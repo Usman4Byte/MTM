@@ -43,6 +43,7 @@ export const FACT_KINDS = {
   // schedule
   break: { area: "schedule", doc: "a required break (label, num=minutes, text=fixed HH:MM if stated)" },
   block: { area: "schedule", doc: "another required session (label, num=minutes, text=fixed HH:MM if stated)" },
+  lunch_min: { area: "schedule", doc: "total minutes the meal service needs, e.g. 3 sittings x 20 min = 60 (num)" },
   // anything with no plan effect
   note: { area: "schedule", doc: "information with no effect on the plan (text)" },
 } as const satisfies Record<string, { area: Area; doc: string }>;

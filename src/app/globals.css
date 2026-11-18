@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f5f6fa;
+  --card: #ffffff;
+  --ink: #0f172a;
+  --muted: #5b6577;
+  --line: #e3e7ef;
+  --accent: #4338ca;
+  --accent-ink: #ffffff;
+  --soft: #eef0fb;
+  --ok: #047857;
+  --ok-soft: #e6f6ef;
+  --bad: #b91c1c;
+  --bad-soft: #fdecec;
+  --warn: #b45309;
+  --warn-soft: #fdf3e2;
+  --code: #f3f4f8;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1020;
+    --card: #121a2d;
+    --ink: #e6e9f2;
+    --muted: #9aa5ba;
+    --line: #243150;
+    --accent: #8b93ff;
+    --accent-ink: #0b1020;
+    --soft: #1b2440;
+    --ok: #34d399;
+    --ok-soft: #0f2a22;
+    --bad: #f87171;
+    --bad-soft: #2d1418;
+    --warn: #fbbf24;
+    --warn-soft: #2c2310;
+    --code: #0e1526;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1020; --card: #121a2d; --ink: #e6e9f2; --muted: #9aa5ba; --line: #243150; --accent: #8b93ff; --accent-ink: #0b1020;
+  --soft: #1b2440; --ok: #34d399; --ok-soft: #0f2a22; --bad: #f87171; --bad-soft: #2d1418; --warn: #fbbf24; --warn-soft: #2c2310; --code: #0e1526;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-soft: var(--soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-code: var(--code);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-jb), ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; }
+.num { font-variant-numeric: tabular-nums; }
+pre { white-space: pre-wrap; word-break: break-word; }
+details > summary { cursor: pointer; list-style: none; }
+details > summary::-webkit-details-marker { display: none; }

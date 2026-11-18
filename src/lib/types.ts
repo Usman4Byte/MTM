@@ -218,6 +218,9 @@ export interface Run {
   totals: { promptTokens: number; outputTokens: number; thoughtsTokens: number; totalTokens: number };
   limits: { maxCalls: number | null; maxMs: number };
   aborted?: string;
+  /** areas the team predicted would make model calls (written before submitting) */
+  prediction?: CallTag[];
+  inputs?: string[];
 }
 
 export interface ProjectState {

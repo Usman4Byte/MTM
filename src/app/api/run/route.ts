@@ -4,7 +4,7 @@
 
 import { NextResponse } from "next/server";
 import { newProject, runPipeline } from "@/lib/agent/pipeline";
-import { MAX_FILE_BYTES, type RawInput } from "@/lib/ingest";
+import type { RawInput } from "@/lib/ingest";
 import { llmConfigFromEnv } from "@/lib/llm/gemini";
 import { policyFromEnv } from "@/lib/planner";
 import type { ProjectState } from "@/lib/types";
@@ -36,7 +36,6 @@ export async function POST(req: Request) {
   for (const entry of form.getAll("files")) {
     if (typeof entry === "string") continue;
     // oversize files are passed through so ingestion reports them (too_large) instead of dropping them
-    void MAX_FILE_BYTES;
     files.push({ name: entry.name || "upload", bytes: new Uint8Array(await entry.arrayBuffer()), mime: entry.type || undefined });
   }
   const text = form.get("text");

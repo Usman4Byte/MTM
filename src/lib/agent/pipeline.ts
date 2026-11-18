@@ -49,18 +49,7 @@ export interface PipelineResult {
   run: Run;
 }
 
-export function newProject(name = "Hackathon plan"): ProjectState {
-  return {
-    id: `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`,
-    name,
-    createdAt: new Date().toISOString(),
-    messages: [],
-    facts: [],
-    plans: [],
-    runs: [],
-    counters: { msg: 0, fact: 0, call: 0, run: 0 },
-  };
-}
+export { newProject } from "../project";
 
 /** Which fact kinds can be blamed for a failing check (used to find the message that broke the plan). */
 const IMPLICATED: Record<CheckResult["id"], FactKind[]> = {

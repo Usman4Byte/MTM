@@ -69,3 +69,20 @@ test("text outside any row is kept, never dropped", () => {
   assert.equal(c.records, 2);
   assert.ok(c.text.includes("Some stray note here"));
 });
+
+test("PDF page breaks: 'Page 3 of 4' and a repeated header never end up in a sender", () => {
+  const c = cleanText(`# From Date Message
+1 Dean, email 9 Nov “Budget Rs 600,000.”
+Page 3 of 4
+# From Date Message
+2 Margalla Event Halls,
+email 3 Nov “Hall A seats 200 at Rs 120,000.”
+Page 4 of 4 # From Date
+3 Caterer, WhatsApp 12 Nov “Box Rs 900.”`);
+  assert.equal(c.records, 3);
+  assert.deepEqual(
+    c.preview.map((p) => p.from),
+    ["Dean, email", "Margalla Event Halls, email", "Caterer, WhatsApp"],
+  );
+  assert.ok(!/page \d/i.test(c.text));
+});

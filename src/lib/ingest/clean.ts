@@ -140,7 +140,15 @@ function splitPrefix(prefix: string): { from: string; date: string } {
       p = p.slice(0, m.index).trim();
     }
   }
-  const from = p.replace(/^from\s*:\s*/i, "").replace(/[,;:|-]\s*$/, "").trim();
+  let from = p.replace(/^from\s*:\s*/i, "").replace(/[,;:|-]\s*$/, "").trim();
+  // leftovers of a repeated column header ("# From Date …") at the start of a sender are not the sender
+  let words = from.split(/\s+/);
+  while (words.length > 1 && Object.values(ROLE).some((r) => r.test(words[0].replace(/[:|]$/, "")))) words = words.slice(1);
+  from = words
+    .join(" ")
+    .replace(/^[#|:\s]+/, "")
+    .replace(/^\d{1,3}[.)]?\s+/, "") // row number that followed the stripped header words
+    .trim();
   return { from, date };
 }
 
@@ -206,6 +214,19 @@ export function cleanText(raw: string): CleanResult {
     columns = headerColumns(lines[hi])!;
     lines = lines.slice(hi + 1);
   }
+  // PDF copies repeat the column header and add "Page 3 of 4" at every page break: remove both,
+  // whether they sit on their own line or got glued onto a row
+  const pageMark = /\bpage\s+\d+\s*(?:of|\/)\s*\d+\b/gi;
+  const headerSeq = columns.length
+    ? new RegExp(`(?:^|\\s)${columns.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*[|\\t]?\\s*")}(?=\\s|$)`, "gi")
+    : null;
+  lines = lines
+    .map((l) => {
+      let x = l.replace(pageMark, " ");
+      if (headerSeq) x = x.replace(headerSeq, " ");
+      return x.trim(); // keep inner spacing: wide gaps can be column separators
+    })
+    .filter((l) => l && !/^\s*\d+\s*$/.test(l));
   const named = (n: number, kind: string) =>
     `Found ${columns.length ? `columns ${columns.join(" · ")} and ` : ""}${n} row(s) in a ${kind}; rebuilt each row as one message (layout only, words unchanged).`;
 

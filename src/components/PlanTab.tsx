@@ -3,6 +3,8 @@
 // Plan tab in the ui/ design: summary, six checks, five area cards, schedule timeline, budget, judging, assumptions.
 // All values come from the real plan; nothing here is hardcoded.
 
+import { useState } from "react";
+import { humanizeFact } from "@/lib/humanize";
 import { rs } from "@/lib/planner/time";
 import { formatPlan } from "@/lib/report";
 import type { CheckResult, Fact, Plan, ProjectState, Run } from "@/lib/types";
@@ -32,8 +34,10 @@ export function Src({ ids, project }: { ids: string[]; project: ProjectState }) 
   );
 }
 
+type AreaKey = "venue" | "schedule" | "food" | "judging" | "budget";
+
 interface AreaView {
-  key: "venue" | "schedule" | "food" | "judging" | "budget";
+  key: AreaKey;
   eyebrow: string;
   title: React.ReactNode;
   summary: string;
@@ -57,6 +61,7 @@ export function PlanTab({
   latestVersion: number;
   lastRun?: Run;
 }) {
+  const [openArea, setOpenArea] = useState<AreaKey | null>(null);
   const h = plan.headcount;
   const j = plan.judging;
   const check = (id: CheckResult["id"]) => plan.checks.find((c) => c.id === id);
@@ -148,7 +153,10 @@ export function PlanTab({
         { label: "Remaining", value: rs(plan.budget.remaining) },
         { label: "Lines", value: String(plan.budget.lines.length) },
       ],
-      details: plan.budget.requests.map((r) => `Not included: ${r.label} ${rs(r.amount)} (${r.wouldFit ? "would fit if approved" : "would not fit"})`),
+      details: [
+        ...plan.budget.lines.map((l) => `${l.label}: ${rs(l.amount)}`),
+        ...plan.budget.requests.map((r) => `Not included: ${r.label} ${rs(r.amount)} (${r.wouldFit ? "would fit if approved" : "would not fit"})`),
+      ],
       check: check("budget"),
     },
   ];
@@ -244,7 +252,15 @@ export function PlanTab({
       </div>
       <section className="area-grid" aria-label="Planning areas">
         {areas.map((a) => (
-          <article className="area-card panel" key={a.key}>
+          <article
+            className="area-card panel area-card-click"
+            key={a.key}
+            role="button"
+            tabIndex={0}
+            onClick={() => setOpenArea(a.key)}
+            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), setOpenArea(a.key))}
+            aria-label={`Open the ${a.eyebrow} breakdown`}
+          >
             <div className="card-topline">
               <span className={`area-marker marker-${a.key}`} /> <span className="area-eyebrow">{a.eyebrow}</span>
               {a.check && <Pill ok={a.check.pass}>{a.check.pass ? "Valid" : "Conflict"}</Pill>}
@@ -267,9 +283,13 @@ export function PlanTab({
                 </li>
               ))}
             </ul>
+            <span className="read-more" style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 14, fontSize: 11 }}>
+              View full breakdown <Icon name="arrow" size={14} />
+            </span>
           </article>
         ))}
       </section>
+      {openArea && <AreaDrawer area={openArea} plan={plan} project={project} onClose={() => setOpenArea(null)} />}
 
       <section className="timeline-section">
         <div className="section-heading-row">
@@ -406,4 +426,299 @@ export function PlanTab({
 
 function cap(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ---------------- full breakdown drawer for one area ----------------
+
+const CHECK_FOR: Record<AreaKey, CheckResult["id"]> = { venue: "venue", schedule: "schedule", food: "figures", judging: "judges", budget: "budget" };
+const AREA_TITLE: Record<AreaKey, string> = { venue: "Venue", schedule: "Schedule", food: "Food", judging: "Judging", budget: "Budget" };
+
+function Table({ head, rows, total }: { head: string[]; rows: React.ReactNode[][]; total?: React.ReactNode[] }) {
+  const right = (i: number, n: number) => (i === n - 1 ? { textAlign: "right" as const } : undefined);
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table className="breakdown-table">
+        <thead>
+          <tr>
+            {head.map((h, i) => (
+              <th key={i} style={right(i, head.length)}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              {r.map((c, k) => (
+                <td key={k} style={right(k, r.length)}>
+                  {c}
+                </td>
+              ))}
+            </tr>
+          ))}
+          {total && (
+            <tr className="total-row">
+              {total.map((c, k) => (
+                <td key={k} style={right(k, total.length)}>
+                  {c}
+                </td>
+              ))}
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="drawer-section">
+      <span className="detail-label">{title}</span>
+      {children}
+    </div>
+  );
+}
+
+function AreaDrawer({ area, plan, project, onClose }: { area: AreaKey; plan: Plan; project: ProjectState; onClose: () => void }) {
+  const h = plan.headcount;
+  const j = plan.judging;
+  const chk = plan.checks.find((c) => c.id === CHECK_FOR[area]);
+  const moneyKinds = ["committed", "cost", "request", "budget_total"];
+  const facts = project.facts.filter((f) => f.kind !== "note" && (area === "budget" ? moneyKinds.includes(f.kind) : f.area === area));
+  const msgOf = (f?: Fact) => (f ? project.messages.find((m) => m.id === f.msgId) : undefined);
+  const used = facts.filter((f) => f.status === "active");
+  const notUsed = facts.filter((f) => f.status !== "active");
+  const chosenTag = <b style={{ color: "var(--green-dark)" }}>Chosen</b>;
+  const peopleRows: React.ReactNode[][] = [
+    ["Students", h.students ?? "?"],
+    ["Judges (engaged)", h.judges ?? "?"],
+    ["Staff", h.staff ?? 0],
+    ...h.extra.map((e) => [cap(e.label), e.num]),
+  ];
+
+  let decision: React.ReactNode;
+  let body: React.ReactNode;
+  if (area === "venue") {
+    const opts = project.facts.filter((f) => f.kind === "venue_option" && f.status === "active");
+    decision = plan.venue.chosen ? (
+      <>
+        <b>{cap(plan.venue.chosen.label)}</b> is the cheapest space that seats everyone ({h.total}) and meets every requirement ({plan.venue.requirements.join(", ")}).
+      </>
+    ) : (
+      "No venue meets the requirements."
+    );
+    body = (
+      <>
+        <Section title="Every option considered">
+          <Table
+            head={["Space", "Seats", "Features", "Decision", "Price"]}
+            rows={opts.map((o) => {
+              const why = plan.venue.rejectedOptions.find((r) => r.label === o.label)?.why;
+              return [
+                cap(o.label ?? ""),
+                o.num ?? "?",
+                o.features?.join(", ") || "—",
+                plan.venue.chosen?.factId === o.id ? chosenTag : why ? <span style={{ color: "var(--red)" }}>{why}</span> : "Fits, but costs more",
+                rs(o.price),
+              ];
+            })}
+          />
+        </Section>
+        <Section title="Seats needed">
+          <Table head={["Who", "People"]} rows={peopleRows} total={["Total to seat", h.total ?? "?"]} />
+        </Section>
+      </>
+    );
+  } else if (area === "food") {
+    const opts = project.facts.filter((f) => f.kind === "food_option" && f.status === "active");
+    decision = plan.food.option ? (
+      <>
+        <b>
+          {plan.food.ordered} × {plan.food.option.label}
+        </b>{" "}
+        at {rs(plan.food.option.price)} per head = <b>{rs(plan.food.cost)}</b>. This is the best meal option that keeps the whole plan within budget.
+      </>
+    ) : (
+      "No meal option available."
+    );
+    body = (
+      <>
+        <Section title="Meal options">
+          <Table
+            head={["Option", `Cost for ${plan.food.meals ?? "?"} meals`, "Decision", "Per head"]}
+            rows={opts.map((o) => [cap(o.label ?? ""), rs((plan.food.meals ?? 0) * (o.price ?? 0)), plan.food.option?.factId === o.id ? chosenTag : "Not chosen", rs(o.price)])}
+          />
+        </Section>
+        <Section title="Meals needed (everyone on site)">
+          <Table head={["Who", "Meals"]} rows={peopleRows} total={["Total meals", plan.food.meals ?? "?"]} />
+        </Section>
+        {(plan.food.specials.length > 0 || plan.food.fees.length > 0) && (
+          <Section title="Specials and fees">
+            <Table
+              head={["Item", "Amount"]}
+              rows={[
+                ...plan.food.specials.map((x) => [`${x.count} × ${x.label} @ ${rs(x.price)}`, rs(x.count * x.price)]),
+                ...plan.food.fees.map((x) => [cap(x.label), x.amount === 0 ? "Free" : rs(x.amount)]),
+              ]}
+            />
+          </Section>
+        )}
+      </>
+    );
+  } else if (area === "judging") {
+    decision = (
+      <>
+        <b>{j.used} judges</b> cover all {j.teams} teams in parallel: {j.minutesPerTeam} min per team × at most {j.maxTeamsPerJudge} teams = a {j.blockMinutes}-min judging block.
+      </>
+    );
+    const perTeam = h.students && j.teams ? h.students / j.teams : null;
+    body = (
+      <>
+        <Section title="Working">
+          <Table
+            head={["Step", "Result"]}
+            rows={[
+              ["Teams", `${h.students ?? "?"} students ÷ ${perTeam ?? "?"} per team = ${j.teams}`],
+              ["Judges needed", `${j.teams} teams ÷ ${j.maxTeamsPerJudge} per judge, rounded up = ${j.required}`],
+              ["Judges confirmed", j.confirmed ?? "?"],
+              ["Judges engaged (paid and fed)", j.used ?? "?"],
+              ["Reserves (unpaid unless used)", j.reserves ?? 0],
+              ["Honoraria", `${j.used} × ${rs(j.honorarium)} = ${j.used !== null && j.honorarium !== null ? rs(j.used * j.honorarium) : "?"}`],
+            ]}
+          />
+        </Section>
+        <Section title="Who judges which teams">
+          <div className="tag-list">
+            {j.assignments.map((a) => (
+              <span key={a.judge} className="area-tag">
+                <b>{a.judge}</b> · teams {a.teams.join(", ")}
+              </span>
+            ))}
+          </div>
+        </Section>
+      </>
+    );
+  } else if (area === "schedule") {
+    decision = (
+      <>
+        <b>
+          {plan.schedule.start}–{plan.schedule.end}
+        </b>{" "}
+        ({plan.schedule.durationMin} min), with every required break and a judging block long enough for every judge.
+      </>
+    );
+    body = (
+      <Section title="Full timeline">
+        <Table
+          head={["Time", "Session", "Why it is here", "Minutes"]}
+          rows={plan.schedule.items.map((i) => [
+            `${i.start}–${i.end}`,
+            i.label,
+            i.factIds.length
+              ? `Required by ${i.factIds.map((id) => msgOf(project.facts.find((f) => f.id === id))?.from ?? id).join(", ")}`
+              : i.kind === "build"
+                ? "Build time (fills the rest)"
+                : i.kind === "judging"
+                  ? "Judging rules"
+                  : "Planner default",
+            i.minutes,
+          ])}
+          total={["", "Total", "", plan.schedule.items.reduce((a, i) => a + i.minutes, 0)]}
+        />
+      </Section>
+    );
+  } else {
+    decision = (
+      <>
+        Spend <b>{rs(plan.budget.total)}</b> of <b>{rs(plan.budget.cap)}</b>, leaving <b>{rs(plan.budget.remaining)}</b>.
+      </>
+    );
+    body = (
+      <>
+        <Section title="Every cost line">
+          <Table
+            head={["Item", "Area", "Working", "Amount"]}
+            rows={plan.budget.lines.map((l) => [
+              <>
+                {l.label}
+                <Src ids={l.factIds} project={project} />
+              </>,
+              l.area,
+              l.formula,
+              rs(l.amount),
+            ])}
+            total={["Total", "", `cap ${rs(plan.budget.cap)}`, rs(plan.budget.total)]}
+          />
+        </Section>
+        {plan.budget.requests.length > 0 && (
+          <Section title="Not included (no approval)">
+            <Table head={["Request", "If approved", "Amount"]} rows={plan.budget.requests.map((r) => [r.label, r.wouldFit ? "Would fit" : "Would not fit", rs(r.amount)])} />
+          </Section>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="overlay drawer-overlay" role="presentation" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <aside className="drawer drawer-wide" role="dialog" aria-modal="true" aria-labelledby="area-title">
+        <div className="drawer-header">
+          <div>
+            <div className="section-kicker">Breakdown · plan v{plan.version}</div>
+            <h2 id="area-title">{AREA_TITLE[area]}</h2>
+          </div>
+          <button className="icon-button" onClick={onClose} aria-label="Close">
+            <Icon name="close" />
+          </button>
+        </div>
+        <div className="drawer-message" style={{ marginTop: 18 }}>
+          {decision}
+        </div>
+        {body}
+        {chk && (
+          <Section title={`Check: ${chk.name} (${chk.pass ? "pass" : "fail"})`}>
+            <ul className="detail-list">
+              {chk.details.map((d, i) => (
+                <li key={i} style={{ alignItems: "flex-start" }}>
+                  <Icon name={chk.pass ? "check" : "alert"} size={13} />
+                  {d}
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+        <Section title="Where the numbers came from">
+          <div style={{ display: "grid", gap: 6 }}>
+            {used.map((f) => (
+              <div key={f.id} className="source-row">
+                <b>{humanizeFact(f)}</b>
+                <span className="src-meta">
+                  {msgOf(f)?.from ?? "?"} · {f.msgId}
+                  {msgOf(f)?.date ? ` · ${msgOf(f)!.date}` : ""}
+                </span>
+              </div>
+            ))}
+            {!used.length && <span className="muted-label">No facts for this area.</span>}
+          </div>
+        </Section>
+        {notUsed.length > 0 && (
+          <Section title="Not used (out of date or rejected)">
+            <div style={{ display: "grid", gap: 6 }}>
+              {notUsed.map((f) => (
+                <div key={f.id} className="source-row" style={{ background: f.status === "rejected" ? "var(--red-bg)" : "var(--amber-bg)" }}>
+                  <b>{humanizeFact(f)}</b>
+                  <span className="src-meta">
+                    {f.status === "rejected" ? "Rejected" : "Out of date"} · {msgOf(f)?.from ?? "?"} · {f.msgId}
+                  </span>
+                  {f.reason && <span className="src-reason">{f.reason}</span>}
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
+      </aside>
+    </div>
+  );
 }

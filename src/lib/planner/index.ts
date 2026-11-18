@@ -4,6 +4,7 @@
 import { normLabel } from "../facts";
 import type { BudgetLine, Fact, FactKind, Plan, ScheduleItem } from "../types";
 import { fmtClock, parseClock, rs } from "./time";
+import { DEFAULT_PLACE, placeFromEnv, prayerKind, prayerTimes, type PrayerPlace } from "./prayer";
 import { validatePlan } from "./validate";
 
 /** Planning policy: defaults the planner uses when the messages are silent. Not facts. */
@@ -16,6 +17,11 @@ export interface PlannerPolicy {
   lunchMin: number;
   closingMin: number;
   minBuildMin: number;
+  /** YYYY-MM-DD used for prayer times; today when unset */
+  eventDate?: string;
+  /** when Zuhr is prayed together locally, "HH:MM-HH:MM" (Pakistan mosques: about 13:15-13:45) */
+  zuhrJamaat: string;
+  place: PrayerPlace;
 }
 
 export function policyFromEnv(): PlannerPolicy {
@@ -26,6 +32,9 @@ export function policyFromEnv(): PlannerPolicy {
     lunchMin: 30,
     closingMin: 15,
     minBuildMin: 60,
+    eventDate: process.env.MTM_EVENT_DATE || undefined,
+    zuhrJamaat: process.env.MTM_ZUHR_JAMAAT || "13:15-13:45",
+    place: placeFromEnv(),
   };
 }
 
@@ -36,6 +45,8 @@ export const DEFAULT_POLICY: PlannerPolicy = {
   lunchMin: 30,
   closingMin: 15,
   minBuildMin: 60,
+  place: DEFAULT_PLACE,
+  zuhrJamaat: "13:15-13:45",
 };
 
 class FactView {
@@ -231,7 +242,71 @@ export function buildPlan(active: Fact[], version: number, runId: number, policy
     start = parseClock(policy.defaultStart) ?? 600;
     assumptions.push(`No start time stated: schedule assumes ${fmtClock(start)} (MTM_DEFAULT_START).`);
   }
-  const sched = duration !== null ? layoutSchedule(v, start, duration, blockMinutes, foodOpts.length > 0, policy) : { items: [], notes: ["Event duration not stated."] };
+  const hasMeal = foodOpts.length > 0;
+  let sched = duration !== null ? layoutSchedule(v, start, duration, blockMinutes, hasMeal, policy) : { items: [], notes: ["Event duration not stated."] };
+  // A prayer break without a stated time goes at the time people actually pray together (mosque jamaat),
+  // e.g. Zuhr 13:15-13:45 in Pakistan, not just "after lunch". Every 15-min start inside that window is
+  // tried with lunch before it, after it, or on its own; the layout where the day flows best wins.
+  const prayer = v.many("break").find((f) => !parseClock(f.text) && prayerKind(f.label));
+  if (prayer && duration !== null) {
+    const date = policy.eventDate ? new Date(`${policy.eventDate}T12:00:00Z`) : new Date();
+    const pt = prayerTimes(date, policy.place);
+    const friday = date.getUTCDay() === 5;
+    const kind = prayerKind(prayer.label);
+    const end = start + duration;
+    const len = prayer.num ?? 15;
+    const zuhr = parseRange(policy.zuhrJamaat) ?? [13 * 60 + 15, 13 * 60 + 45];
+    const windows: { name: string; from: number; to: number; begins: number }[] = [];
+    if (kind !== "asr")
+      windows.push(
+        friday
+          ? { name: "Jumu'ah", from: zuhr[0], to: Math.max(zuhr[1], 14 * 60), begins: pt.dhuhr }
+          : { name: "Zuhr", from: zuhr[0], to: zuhr[1], begins: pt.dhuhr },
+      );
+    if (kind !== "dhuhr") windows.push({ name: "Asr", from: pt.asr + 15, to: pt.asr + 45, begins: pt.asr });
+    const lunchLen = v.num("lunch_min") ?? policy.lunchMin;
+    let best: { score: number; sched: typeof sched; at: number; w: (typeof windows)[number]; lunch: string } | null = null;
+    for (const w of windows) {
+      for (let at = Math.ceil(w.from / 15) * 15; at + len <= w.to + (w.to - w.from > 30 ? 15 : 0) && at <= w.to; at += 15) {
+        if (at < start + policy.openingMin || at + len > end - policy.closingMin) continue;
+        const lunchChoices: [string, number | undefined][] = hasMeal
+          ? [
+              ["before", at - lunchLen],
+              ["after", at + len],
+              ["separate", undefined],
+            ]
+          : [["none", undefined]];
+        for (const [lunchPos, lunchAt] of lunchChoices) {
+          if (lunchAt !== undefined && (lunchAt < start + policy.openingMin || lunchAt + lunchLen > end - policy.closingMin)) continue;
+          const trial = layoutSchedule(v, start, duration, blockMinutes, hasMeal, policy, { fixedAt: { [prayer.id]: at }, lunchAt });
+          if (trial.notes.length) continue;
+          const items = trial.items;
+          const lastBuild = items.map((i) => i.kind).lastIndexOf("build");
+          const judgingIdx = items.findIndex((i) => i.kind === "judging");
+          const closingLast = items[items.length - 1]?.kind === "closing";
+          const buffer = items.filter((i) => i.label.startsWith("Buffer")).reduce((x, i) => x + i.minutes, 0);
+          const buildPieces = items.filter((i) => i.kind === "build").length;
+          const score =
+            (closingLast ? 0 : 1000) +
+            (judgingIdx < 0 || judgingIdx > lastBuild ? 0 : 500) + // judging after all building
+            buffer * 5 + // no idle time
+            (buildPieces - 1) * 8 + // fewer interruptions to building
+            (lunchPos === "separate" ? 6 : 0) + // lunch next to prayer is how events run
+            (at - w.from) * 0.05;
+          if (!best || score < best.score) best = { score, sched: trial, at, w, lunch: lunchPos };
+        }
+      }
+    }
+    if (best) {
+      sched = best.sched;
+      const day = date.toISOString().slice(0, 10);
+      assumptions.push(
+        `Prayer break ${fmtClock(best.at)}–${fmtClock(best.at + len)}: ${best.w.name} is prayed together (jamaat) at about ${fmtClock(best.w.from)}–${fmtClock(best.w.to)} (${best.w.name === "Asr" ? `Asr begins ${fmtClock(best.w.begins)}, Hanafi` : `prayer time begins ${fmtClock(best.w.begins)}`}) in ${policy.place.name} on ${day}${best.lunch === "before" ? "; lunch just before it" : best.lunch === "after" ? "; lunch right after it" : ""}. Change with MTM_ZUHR_JAMAAT / MTM_EVENT_DATE.`,
+      );
+    } else {
+      assumptions.push(`No congregational prayer time (${windows.map((w) => `${w.name} ${fmtClock(w.from)}–${fmtClock(w.to)}`).join(", ")}) fits inside ${fmtClock(start)}–${fmtClock(end)}; the prayer break is scheduled as a normal break.`);
+    }
+  }
 
   const plan: Plan = {
     version,
@@ -285,6 +360,13 @@ export function buildPlan(active: Fact[], version: number, runId: number, policy
   return plan;
 }
 
+function parseRange(r: string | undefined): [number, number] | null {
+  const m = /(\d{1,2}[:.]\d{2})\s*[-–]\s*(\d{1,2}[:.]\d{2})/.exec(r ?? "");
+  const a = parseClock(m?.[1]);
+  const b = parseClock(m?.[2]);
+  return a !== null && b !== null && b > a ? [a, b] : null;
+}
+
 interface Slot {
   label: string;
   kind: ScheduleItem["kind"];
@@ -300,6 +382,7 @@ function layoutSchedule(
   judgingMin: number | null,
   hasMeal: boolean,
   policy: PlannerPolicy,
+  opts: { fixedAt?: Record<string, number>; lunchAt?: number } = {},
 ): { items: ScheduleItem[]; notes: string[] } {
   const notes: string[] = [];
   const fixed: { at: number; slot: Slot }[] = [];
@@ -311,15 +394,18 @@ function layoutSchedule(
       notes.push(`"${slot.label}" has no duration; not scheduled.`);
       continue;
     }
-    const at = parseClock(f.text);
+    const at = opts.fixedAt?.[f.id] ?? parseClock(f.text);
     if (at !== null) fixed.push({ at, slot });
     else (f.kind === "break" ? floatingBreaks : floatingBlocks).push(slot);
   }
+  const lunchSlot: Slot = { label: "Lunch", kind: "meal", minutes: v.num("lunch_min") ?? policy.lunchMin, elastic: false, factIds: v.one("lunch_min") ? [v.one("lunch_min")!.id] : [] };
+  const lunchFixed = hasMeal && opts.lunchAt !== undefined;
+  if (lunchFixed) fixed.push({ at: opts.lunchAt!, slot: lunchSlot });
   fixed.sort((a, b) => a.at - b.at);
   const seq: Slot[] = [
     { label: "Opening & briefing", kind: "opening", minutes: policy.openingMin, elastic: false, factIds: [] },
     { label: "Build (hacking)", kind: "build", minutes: 0, elastic: true, factIds: [] },
-    ...(hasMeal ? [{ label: "Lunch", kind: "meal" as const, minutes: v.num("lunch_min") ?? policy.lunchMin, elastic: false, factIds: v.one("lunch_min") ? [v.one("lunch_min")!.id] : [] }] : []),
+    ...(hasMeal && !lunchFixed ? [lunchSlot] : []),
     ...floatingBreaks,
     { label: "Build (hacking)", kind: "build", minutes: 0, elastic: true, factIds: [] },
     ...floatingBlocks,

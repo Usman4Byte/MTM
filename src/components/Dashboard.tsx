@@ -165,6 +165,25 @@ export default function Dashboard() {
     } else setStore({ activeId: ids[0], projects: rest });
     setViewVersion(null);
   };
+  const resetSystem = () => {
+    const n = Object.keys(store?.projects ?? {}).length;
+    if (!window.confirm(`Reset the system?\n\nThis permanently deletes all ${n} project(s), messages, plan versions and traces saved in this browser. It cannot be undone. Export anything you want to keep first.`)) return;
+    try {
+      window.localStorage.removeItem(STORE_KEY);
+    } catch {
+      /* storage may be blocked; the in-memory state is still replaced below */
+    }
+    const p = newProject("Hackathon plan");
+    setStore({ activeId: p.id, projects: { [p.id]: p } });
+    setViewVersion(null);
+    setFiles([]);
+    setText("");
+    setPrediction([]);
+    setError(null);
+    setTab("plan");
+    setNotice("System reset: all browser data deleted. Load a message pack to start fresh.");
+  };
+
   const importProj = async (f: File | undefined) => {
     if (!f) return;
     try {
@@ -311,6 +330,7 @@ export default function Dashboard() {
             onImport={() => importInput.current?.click()}
             onExport={() => download(`${project.name.replace(/\W+/g, "-")}-project.json`, JSON.stringify(project, null, 2), "application/json")}
             onDelete={deleteProj}
+            onReset={resetSystem}
           />
         )}
         </div>
@@ -491,6 +511,7 @@ function SetupTab({
   onImport,
   onExport,
   onDelete,
+  onReset,
 }: {
   cfg: ServerConfig | null;
   store: Store;
@@ -500,6 +521,7 @@ function SetupTab({
   onImport: () => void;
   onExport: () => void;
   onDelete: () => void;
+  onReset: () => void;
 }) {
   return (
     <div className="tab-content plan-content">
@@ -570,6 +592,18 @@ function SetupTab({
         <p className="muted-label" style={{ marginTop: 12, lineHeight: 1.5 }}>
           Projects live in this browser&apos;s local storage; the server keeps nothing. Use Export to move or back up a project. CLI state files (.mtm/state.json) can be imported. Current: <b>{project.name}</b>.
         </p>
+      </section>
+
+      <section className="panel danger-zone" style={{ padding: 22 }}>
+        <div className="section-kicker" style={{ color: "var(--red)" }}>Fresh start</div>
+        <h2 style={{ margin: "8px 0 8px", fontSize: 20 }}>Reset system</h2>
+        <p className="muted-label" style={{ margin: "0 0 14px", lineHeight: 1.5 }}>
+          Deletes <b>every</b> project, message, plan version and trace saved in this browser ({Object.keys(store.projects).length} project
+          {Object.keys(store.projects).length === 1 ? "" : "s"}) and starts one empty project. The server and your API keys are not affected. Export anything you want to keep first.
+        </p>
+        <button className="button button-secondary" style={{ color: "var(--red)", borderColor: "#f3c9c3" }} onClick={onReset}>
+          <Icon name="alert" size={15} /> Reset system (delete all browser data)
+        </button>
       </section>
     </div>
   );
